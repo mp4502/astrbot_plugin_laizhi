@@ -59,7 +59,20 @@ class LaizhiHandlers:
                 with open(image_path, 'rb') as f:
                     image_hash = hashlib.sha256(f.read()).hexdigest()
 
-                # 记录发送的图片信息：图片路径 -> 图库名映射
+                # 将本地图片路径添加到上下文管理器（这样用户回复时能获取到）
+                if self.image_context_manager:
+                    try:
+                        self.image_context_manager.add_image(
+                            event,
+                            image_path,  # 添加本地文件路径
+                            message_id=str(getattr(event, "message_id", "")),
+                            sender_id="bot"
+                        )
+                        logger.info(f"已将发送的图片添加到上下文: {image_path}")
+                    except Exception as e:
+                        logger.warning(f"添加图片到上下文失败: {e}")
+
+                # 记录发送的图片信息：图片哈希 -> 图库名映射
                 if self.image_context_manager:
                     try:
                         # 记录映射：图片哈希 -> (session_id, laizhi_name)
@@ -253,7 +266,7 @@ class LaizhiHandlers:
         image_url = None
         image_file = None
 
-        # 1. 优先从图片上下文管理器获取
+        # 1. 优先从图片上下文管理器获取（现在会包含机器人发送的本地图片路径）
         if self.image_context_manager:
             try:
                 image_url = self.image_context_manager.get_recent_image(event)
@@ -277,11 +290,13 @@ class LaizhiHandlers:
         # 计算图片哈希
         target_path = image_file if image_file else image_url
 
-        # 如果是本地路径，直接计算哈希
-        if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/')):
+        # 如果是本地路径，直接计算哈希（包含机器人发送的本地图片）
+        if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/') or target_path.startswith('\\')):
             try:
                 with open(target_path, 'rb') as f:
                     image_hash = hashlib.sha256(f.read()).hexdigest()
+
+                logger.info(f"计算回复图片的哈希: {image_hash[:8]}, 路径: {target_path}")
 
                 # 查询机器人发送的图片记录
                 if self.image_context_manager:
@@ -317,7 +332,8 @@ class LaizhiHandlers:
                 logger.error(f"删除图片异常: {e}")
                 return event.plain_result(f"删除图片失败！{str(e)}")
         else:
-            return event.plain_result(f"删除图片失败！只支持删除机器人发送的图片")
+            logger.warning(f"无法处理图片来源: {target_path}")
+            return event.plain_result(f"删除图片失败！未找到本地图片路径，路径: {target_path}")
 
 
     async def handle_query(self, event: AstrMessageEvent):
@@ -374,7 +390,7 @@ class LaizhiHandlers:
         image_url = None
         image_file = None
 
-        # 1. 优先从图片上下文管理器获取
+        # 1. 优先从图片上下文管理器获取（现在会包含机器人发送的本地图片路径）
         if self.image_context_manager:
             try:
                 image_url = self.image_context_manager.get_recent_image(event)
@@ -398,11 +414,13 @@ class LaizhiHandlers:
         # 计算图片哈希
         target_path = image_file if image_file else image_url
 
-        # 如果是本地路径，直接计算哈希
-        if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/')):
+        # 如果是本地路径，直接计算哈希（包含机器人发送的本地图片）
+        if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/') or target_path.startswith('\\')):
             try:
                 with open(target_path, 'rb') as f:
                     image_hash = hashlib.sha256(f.read()).hexdigest()
+
+                logger.info(f"计算回复图片的哈希: {image_hash[:8]}, 路径: {target_path}")
 
                 # 查询机器人发送的图片记录
                 if self.image_context_manager:
@@ -441,4 +459,5 @@ class LaizhiHandlers:
                 logger.error(f"查询添加者异常: {e}")
                 return event.plain_result(f"查询失败！{str(e)}")
         else:
-            return event.plain_result(f"查询失败！只支持查询机器人发送的图片")
+            logger.warning(f"无法处理图片来源: {target_path}")
+            return event.plain_result(f"查询失败！未找到本地图片路径，路径: {target_path}")

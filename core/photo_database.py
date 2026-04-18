@@ -43,64 +43,83 @@ class PhotoDatabase:
 
     async def download_image(self, laizhi_name: str, image_url: str, session_id: str = "default") -> Optional[tuple]:
         """
-        下载图片到本地
+        下载图片到本地（先下载到临时位置计算哈希）
         :param laizhi_name: 来只名称
         :param image_url: 图片URL
         :param session_id: 会话ID
         :return: 下载成功返回 (本地文件路径, 哈希值)，失败返回None
         """
+        import tempfile
+        import os
+
         try:
-            # 创建来只文件夹
-            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
-            folder_path.mkdir(parents=True, exist_ok=True)
-
-            # 从URL中提取文件名
-            parsed_url = urlparse(image_url)
-            filename = os.path.basename(parsed_url.path)
-
-            # 如果URL没有文件名，生成一个
-            if not filename or '.' not in filename:
-                import time
-                filename = f"image_{int(time.time())}.jpg"
-
-            local_path = folder_path / filename
-
-            # 如果文件已存在，添加序号
-            if local_path.exists():
-                base_name = local_path.stem
-                extension = local_path.suffix
-                counter = 1
-                while local_path.exists():
-                    local_path = folder_path / f"{base_name}_{counter}{extension}"
-                    counter += 1
-
-            # 下载图片
+            # 1. 先下载到临时文件
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                    if response.status == 200:
-                        content = await response.read()
-
-                        # 计算哈希值
-                        image_hash = self._calculate_hash(content)
-
-                        # 使用哈希值作为文件名（前8位 + 原扩展名）
-                        hash_filename = f"{image_hash[:8]}{local_path.suffix}"
-                        hash_path = folder_path / hash_filename
-
-                        # 如果哈希文件名已存在，说明是重复图片
-                        if hash_path.exists():
-                            logger.info(f"图片已存在（哈希重复）: {hash_path}")
-                            return str(hash_path), image_hash
-
-                        # 保存到本地（使用哈希文件名）
-                        async with aiofiles.open(hash_path, 'wb') as f:
-                            await f.write(content)
-
-                        logger.info(f"图片下载成功: {hash_path}, 哈希: {image_hash[:8]}")
-                        return str(hash_path), image_hash
-                    else:
+                    if response.status != 200:
                         logger.error(f"图片下载失败，HTTP状态码: {response.status}")
                         return None
+
+                    content = await response.read()
+
+                    # 2. 计算哈希值
+                    image_hash = self._calculate_hash(content)
+
+                    # 3. 保存到临时文件
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
+                        tmp_file.write(content)
+                        tmp_file.flush()
+                        temp_path = tmp_file.name
+
+                    logger.info(f"图片下载到临时文件: {temp_path}, 哈希: {image_hash[:8]}")
+
+                    # 4. 检查是否已存在（通过哈希文件名）
+                    folder_path = self._get_laizhi_folder(laizhi_name, session_id)
+                    folder_path.mkdir(parents=True, exist_ok=True)
+
+                    # 尝试不同的扩展名
+                    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+                    hash_file_exists = False
+                    hash_path = None
+
+                    for ext in image_extensions:
+                        potential_path = folder_path / f"{image_hash[:8]}{ext}"
+                        if potential_path.exists():
+                            hash_path = potential_path
+                            hash_file_exists = True
+                            break
+
+                    # 5. 删除临时文件
+                    try:
+                        os.unlink(temp_path)
+                        logger.info(f"已删除临时文件: {temp_path}")
+                    except Exception as e:
+                        logger.warning(f"删除临时文件失败: {e}")
+
+                    # 6. 如果已存在，返回现有路径
+                    if hash_file_exists:
+                        logger.info(f"图片已存在（哈希重复）: {hash_path}")
+                        return str(hash_path), image_hash
+
+                    # 7. 如果不存在，从哈希和原始文件名确定扩展名
+                    # 尝试从URL获取扩展名
+                    from urllib.parse import urlparse
+                    parsed_url = urlparse(image_url)
+                    url_filename = os.path.basename(parsed_url.path)
+                    ext = os.path.splitext(url_filename)[1].lower()
+
+                    # 如果URL没有扩展名或扩展名不支持，使用默认
+                    if ext not in image_extensions:
+                        # 根据内容类型判断（简单实现：默认jpg）
+                        ext = '.jpg'
+
+                    # 8. 重新下载并保存到最终位置
+                    final_path = folder_path / f"{image_hash[:8]}{ext}"
+                    async with aiofiles.open(final_path, 'wb') as f:
+                        await f.write(content)
+
+                    logger.info(f"图片保存成功: {final_path}, 哈希: {image_hash[:8]}")
+                    return str(final_path), image_hash
 
         except Exception as e:
             logger.error(f"图片下载异常: {e}")
