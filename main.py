@@ -12,7 +12,7 @@ from .core import (
     LaizhiHandlers,
     PhotoDatabase
 )
-from core.image_context import init_image_context_manager
+from .core.image_context import init_image_context_manager
 
 
 @register("laizhi", "mp4502", "AstrBot 来只图库插件 - 支持图片管理", "2.0.0")
