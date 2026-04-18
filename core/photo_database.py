@@ -13,7 +13,7 @@ from astrbot.api import logger
 
 
 class PhotoDatabase:
-    """图片数据库管理类"""
+    """图片数据库管理类，支持会话隔离"""
 
     def __init__(self, base_path: Path = None):
         if base_path is None:
@@ -27,11 +27,13 @@ class PhotoDatabase:
         self.base_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"图片数据库已初始化: {self.base_path}")
 
-    def _get_laizhi_folder(self, laizhi_name: str) -> Path:
+    def _get_laizhi_folder(self, laizhi_name: str, session_id: str = "default") -> Path:
         """获取来只的图片文件夹路径"""
         # 清理文件名，移除不安全的字符
         safe_name = "".join(c if c.isalnum() or c in ('-', '_', ' ') else '_' for c in laizhi_name)
-        folder_path = self.base_path / safe_name
+        # 按会话隔离：session_id/laizhi_name
+        session_folder = self.base_path / session_id
+        folder_path = session_folder / safe_name
         return folder_path
 
     def _calculate_hash(self, content: bytes) -> str:
@@ -39,16 +41,17 @@ class PhotoDatabase:
         import hashlib
         return hashlib.sha256(content).hexdigest()
 
-    async def download_image(self, laizhi_name: str, image_url: str) -> Optional[tuple]:
+    async def download_image(self, laizhi_name: str, image_url: str, session_id: str = "default") -> Optional[tuple]:
         """
         下载图片到本地
         :param laizhi_name: 来只名称
         :param image_url: 图片URL
+        :param session_id: 会话ID
         :return: 下载成功返回 (本地文件路径, 哈希值)，失败返回None
         """
         try:
             # 创建来只文件夹
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
             folder_path.mkdir(parents=True, exist_ok=True)
 
             # 从URL中提取文件名
@@ -103,7 +106,7 @@ class PhotoDatabase:
             logger.error(f"图片下载异常: {e}")
             return None
 
-    async def add_local_image(self, laizhi_name: str, local_image_path: str) -> Optional[str]:
+    async def add_local_image(self, laizhi_name: str, local_image_path: str, session_id: str = "default") -> Optional[str]:
         """
         添加本地图片到数据库（复制）
         :param laizhi_name: 来只名称
@@ -112,7 +115,7 @@ class PhotoDatabase:
         """
         try:
             # 创建来只文件夹
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
             folder_path.mkdir(parents=True, exist_ok=True)
 
             # 获取原文件名
@@ -147,14 +150,14 @@ class PhotoDatabase:
             logger.error(f"图片复制异常: {e}")
             return None
 
-    async def get_random_image(self, laizhi_name: str) -> Optional[str]:
+    async def get_random_image(self, laizhi_name: str, session_id: str = "default") -> Optional[str]:
         """
         随机获取一张图片路径
         :param laizhi_name: 来只名称
         :return: 图片路径，如果没有图片返回None
         """
         try:
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
 
             if not folder_path.exists():
                 logger.warning(f"来只 '{laizhi_name}' 的图片文件夹不存在")
@@ -180,14 +183,14 @@ class PhotoDatabase:
             logger.error(f"获取随机图片异常: {e}")
             return None
 
-    async def get_all_images(self, laizhi_name: str) -> List[str]:
+    async def get_all_images(self, laizhi_name: str, session_id: str = "default") -> List[str]:
         """
         获取来只的所有图片路径
         :param laizhi_name: 来只名称
         :return: 图片路径列表
         """
         try:
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
 
             if not folder_path.exists():
                 return []
@@ -205,7 +208,7 @@ class PhotoDatabase:
             logger.error(f"获取图片列表异常: {e}")
             return []
 
-    async def delete_image(self, laizhi_name: str, image_filename: str) -> bool:
+    async def delete_image(self, laizhi_name: str, image_filename: str, session_id: str = "default") -> bool:
         """
         删除指定图片
         :param laizhi_name: 来只名称
@@ -213,7 +216,7 @@ class PhotoDatabase:
         :return: 删除成功返回True，失败返回False
         """
         try:
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
 
             if not folder_path.exists():
                 logger.warning(f"来只 '{laizhi_name}' 的图片文件夹不存在")
@@ -234,7 +237,7 @@ class PhotoDatabase:
             logger.error(f"删除图片异常: {e}")
             return False
 
-    async def delete_image_by_url(self, laizhi_name: str, image_url: str) -> Optional[str]:
+    async def delete_image_by_url(self, laizhi_name: str, image_url: str, session_id: str = "default") -> Optional[str]:
         """
         根据图片URL计算哈希值并删除对应的本地文件
         :param laizhi_name: 来只名称
@@ -256,7 +259,7 @@ class PhotoDatabase:
 
                     # 找到对应的哈希文件名（前8位）
                     hash_filename = f"{image_hash[:8]}{image_path.suffix}"
-                    folder_path = self._get_laizhi_folder(laizhi_name)
+                    folder_path = self._get_laizhi_folder(laizhi_name, session_id)
                     hash_path = folder_path / hash_filename
 
                     if hash_path.exists():
@@ -278,7 +281,7 @@ class PhotoDatabase:
                         image_hash = self._calculate_hash(content)
 
                         # 找到对应的哈希文件名
-                        folder_path = self._get_laizhi_folder(laizhi_name)
+                        folder_path = self._get_laizhi_folder(laizhi_name, session_id)
 
                         # 尝试找到匹配的文件
                         image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
@@ -299,14 +302,14 @@ class PhotoDatabase:
             logger.error(f"根据哈希删除图片异常: {e}")
             return None
 
-    async def delete_all_images(self, laizhi_name: str) -> int:
+    async def delete_all_images(self, laizhi_name: str, session_id: str = "default") -> int:
         """
         删除来只的所有图片
         :param laizhi_name: 来只名称
         :return: 删除的图片数量
         """
         try:
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
 
             if not folder_path.exists():
                 return 0
@@ -334,7 +337,7 @@ class PhotoDatabase:
             logger.error(f"批量删除图片异常: {e}")
             return 0
 
-    async def get_image_count(self, laizhi_name: str) -> int:
+    async def get_image_count(self, laizhi_name: str, session_id: str = "default") -> int:
         """
         获取来只的图片数量
         :param laizhi_name: 来只名称
@@ -343,14 +346,14 @@ class PhotoDatabase:
         images = await self.get_all_images(laizhi_name)
         return len(images)
 
-    async def delete_laizhi_folder(self, laizhi_name: str) -> bool:
+    async def delete_laizhi_folder(self, laizhi_name: str, session_id: str = "default") -> bool:
         """
         删除来只的整个文件夹（包括所有图片）
         :param laizhi_name: 来只名称
         :return: 删除成功返回True
         """
         try:
-            folder_path = self._get_laizhi_folder(laizhi_name)
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
 
             if not folder_path.exists():
                 return True  # 文件夹不存在，视为删除成功

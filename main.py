@@ -53,7 +53,7 @@ class MyPlugin(Star):
 
     async def initialize(self):
         """插件初始化方法"""
-        await self.db.initialize()
+        # 数据库会在首次访问时自动初始化（惰性初始化）
         await self.photo_db.initialize()
         # 创建命令处理器实例，传递数据库实例
         self.handlers = LaizhiHandlers(self.db, self.photo_db, self.image_context_manager)
