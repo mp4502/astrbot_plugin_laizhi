@@ -24,12 +24,31 @@ class MyPlugin(Star):
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
-
-    @filter.regex(r"^来只\s+(\w+)$")
-    async def handle_deer_checkin(self, event: AstrMessageEvent):
+    @filter.regex(r"^新建(\S+)$")
+    @filter.regex(r"^来只(\S+)$")
+    @filter.regex(r"^添加(\S+)$")
+    @filter.regex(r"^删除(\S+)$")  
+    @filter.regex(r"^查询(\S+)$")
+    async def handle_query_keyword(self, event: AstrMessageEvent, name: str)
+        if(event.message_str.startswith("删除")):
+            keyword = event.message_str.split()[1]
+            # 在这里处理关键词，获取相关图片等
+            yield event.plain_result(f"删除 {keyword} 成功！")
+        if(event.message_str.startswith("查询")):
+            # 在这里处理关键词，获取相关图片等
+            yield event.plain_result(f"查询 {name} 成功！")
+        if(event.message_str.startswith("添加")):
+            keyword = event.message_str.split()[1]
+            # 在这里处理关键词，获取相关图片等
+            yield event.plain_result(f"添加 {keyword} 成功！")
         if(event.message_str.startswith("来只")):
             keyword = event.message_str.split()[1]
             # 在这里处理关键词，获取相关图片等
-            yield event.plain_result(f"正在为您搜索与 {keyword} 相关的图片...")
+            yield event.plain_result(f"来只 {keyword} 成功！")
+        if(event.message_str.startswith("新建")):
+            keyword = event.message_str.split()[1]
+            # 在这里处理关键词，获取相关图片等
+            yield event.plain_result(f"新建 {keyword} 成功！")
+    
 
         
