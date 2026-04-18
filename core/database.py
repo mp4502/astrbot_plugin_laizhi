@@ -195,6 +195,62 @@ class LaizhiDB:
         laizhi_info = await self.get_laizhi(name)
         return laizhi_info.aliases if laizhi_info else []
 
+    async def delete_alias(self, name_or_alias: str, alias_to_delete: str) -> bool:
+        """
+        删除别名（允许删除主名称，只要至少保留一个名称）
+        :param name_or_alias: 用来访问的名称或别名
+        :param alias_to_delete: 要删除的别名
+        :return: 删除成功返回True，失败返回False
+        """
+        # 解析真实名称
+        real_name = await self.resolve_name(name_or_alias)
+        if not real_name:
+            return False
+
+        data = await self._load_data()
+        if real_name not in data:
+            return False
+
+        # 获取当前的所有名称（主名称 + 别名）
+        current_aliases = data[real_name].get("aliases", [])
+
+        # 检查要删除的名称是主名称还是别名
+        if alias_to_delete == real_name:
+            # 要删除的是主名称
+            if not current_aliases:
+                # 没有其他名称，不能删除
+                return False
+
+            # 有其他别名，将第一个别名提升为主名称
+            new_primary = current_aliases[0]
+            remaining_aliases = current_aliases[1:]
+
+            # 创建新条目
+            data[new_primary] = data[real_name].copy()
+            data[new_primary]["name"] = new_primary
+            data[new_primary]["aliases"] = remaining_aliases
+
+            # 删除旧条目
+            del data[real_name]
+
+            await self._save_data(data)
+            return True
+        else:
+            # 要删除的是别名
+            if alias_to_delete not in current_aliases:
+                return False
+
+            # 只有一个名称（没有别名），不能删除
+            if not current_aliases:
+                return False
+
+            # 从别名列表中删除
+            current_aliases.remove(alias_to_delete)
+            data[real_name]["aliases"] = current_aliases
+
+            await self._save_data(data)
+            return True
+
     async def _load_data(self) -> dict:
         """加载数据"""
         if not self.db_path.exists():

@@ -2,6 +2,8 @@
 来只插件主文件
 AstrBot 来只图库插件 - 支持图片管理和随机分享
 """
+from pathlib import Path
+
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
@@ -11,8 +13,7 @@ from astrbot.core.message.components import Image
 from .core import (
     LaizhiDB,
     LaizhiHandlers,
-    PhotoDatabase,
-    ImageContextManager
+    PhotoDatabase
 )
 from .core.image_context import init_image_context_manager, get_image_context_manager
 
@@ -23,14 +24,32 @@ class MyPlugin(Star):
 
     def __init__(self, context: Context):
         super().__init__(context)
-        # 初始化数据库
-        self.db = LaizhiDB()
-        # 初始化图片数据库
-        self.photo_db = PhotoDatabase()
+        # 获取插件数据目录
+        plugin_data_path = self._get_plugin_data_path()
+        # 初始化数据库，使用规范的数据目录
+        self.db = LaizhiDB(db_path=plugin_data_path / "laizhi_db.json")
+        # 初始化图片数据库，使用规范的数据目录
+        self.photo_db = PhotoDatabase(base_path=plugin_data_path / "images")
         # 初始化图片上下文管理器
         self.image_context_manager = init_image_context_manager()
         # 初始化命令处理器
-        self.handlers = None  # 将在 initialize 中设置
+        self.handlers = None  # 将在 initialize 中 设置
+
+    def _get_plugin_data_path(self) -> Path:
+        """获取插件数据目录，遵循 AstrBot 大文件存储规范"""
+        try:
+            # 尝试使用 AstrBot 规范路径
+            import importlib
+            path_module = importlib.import_module('astrbot.core.utils.astrbot_path')
+            get_astrbot_data_path = getattr(path_module, 'get_astrbot_data_path', None)
+
+            if get_astrbot_data_path:
+                return Path(get_astrbot_data_path()) / "plugin_data" / "laizhi"
+        except (ImportError, AttributeError):
+            pass
+
+        # 回退到插件目录下的 data/plugin_data 文件夹
+        return Path(__file__).parent.parent / "data" / "plugin_data"
 
     async def initialize(self):
         """插件初始化方法"""
