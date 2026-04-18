@@ -25,27 +25,27 @@ class MyPlugin(Star):
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
 
-    @filter.regex(r"^新建(\S+)$")
+    @filter.regex(r"^新建(?P<name>\S+)$")
     async def handle_new(self, event: AstrMessageEvent, name: str):
         """处理新建命令"""
         yield event.plain_result(f"新建 {name} 成功！")
 
-    @filter.regex(r"^来只(\S+)$")
+    @filter.regex(r"^来只(?P<name>\S+)$")
     async def handle_laizhi(self, event: AstrMessageEvent, name: str):
         """处理来只命令"""
         yield event.plain_result(f"来只 {name} 成功！")
 
-    @filter.regex(r"^添加(\S+)$")
+    @filter.regex(r"^添加(?P<name>\S+)$")
     async def handle_add(self, event: AstrMessageEvent, name: str):
         """处理添加命令"""
         yield event.plain_result(f"添加 {name} 成功！")
 
-    @filter.regex(r"^删除(\S+)$")
+    @filter.regex(r"^删除(?P<name>\S+)$")
     async def handle_delete(self, event: AstrMessageEvent, name: str):
         """处理删除命令"""
         yield event.plain_result(f"删除 {name} 成功！")
 
-    @filter.regex(r"^查询(\S+)$")
+    @filter.regex(r"^查询(?P<name>\S+)$")
     async def handle_query(self, event: AstrMessageEvent, name: str):
         """处理查询命令"""
         yield event.plain_result(f"查询 {name} 成功！")
