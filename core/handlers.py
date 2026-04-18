@@ -160,7 +160,7 @@ class LaizhiHandlers:
             # 获取添加者信息
             from datetime import datetime
             adder_name = event.get_sender_name()
-            adder_qq = event.sender_id
+            adder_qq = event.get_sender_id()
 
             # 创建图片信息
             from .database import ImageInfo
