@@ -182,16 +182,6 @@ class MyPlugin(Star):
         await self.db.initialize()
         logger.info("来只插件数据库初始化完成")
 
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
-        Comp.Image.fromFileSystem("path/to/image.jpg").send(event) # 发送一条图片消息
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
@@ -236,6 +226,34 @@ class MyPlugin(Star):
             yield event.plain_result(f"✅ 为 '{name}' 添加图片成功！当前总数: {new_count}")
         else:
             yield event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
+
+    @filter.regex(r"^别名(\S+)$")
+    async def handle_alias(self, event: AstrMessageEvent):
+        """处理别名命令"""
+        name = event.message_str.removeprefix("别名")
+        laizhi_info = await self.db.get_laizhi(name)  # 验证来只是否存在
+        if not laizhi_info:
+            yield event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
+            return
+        repr = ""
+        for i in range(len(laizhi_info.aliases)):
+            repr += f"• {laizhi_info.aliases[i]}\n"
+        yield event.plain_result(f"📋 '{name}' 的别名列表：\n{repr}")
+
+    @filter.regex(r"^别名(\S+)\s+(.+)$")
+    async def handle_alias(self, event: AstrMessageEvent):
+        """处理别名命令"""
+        name = event.message_str.removeprefix("别名")
+        alias = event.message_str.split(maxsplit=1)[1] if len(event.message_str.split()) > 1 else None
+        laizhi_info = await self.db.get_laizhi(name)  # 验证来只是否存在
+        if not laizhi_info:
+            yield event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
+            return
+        if alias:
+            await self.db.update_laizhi(name, aliases=laizhi_info.aliases + [alias])
+            yield event.plain_result(f"✅ 为 '{name}' 设置别名 '{alias}' 成功！")
+        else:
+            yield event.plain_result(f"❌ 未提供别名，请使用 '别名{name} <别名>' 格式！")
 
     @filter.regex(r"^删除(\S+)$")
     async def handle_delete(self, event: AstrMessageEvent):

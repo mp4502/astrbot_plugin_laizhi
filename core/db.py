@@ -18,13 +18,14 @@ class LaizhiInfo:
         image_count: int = 0,
         last_used: str = None,
         description: str = "",
+        aliases: list[str] = None,
     ):
         self.name = name
         self.created_at = created_at or datetime.now().isoformat()
         self.image_count = image_count
         self.last_used = last_used or datetime.now().isoformat()
         self.description = description
-
+        self.aliases = aliases or []
     def to_dict(self) -> dict:
         """转换为字典"""
         return {
@@ -33,6 +34,7 @@ class LaizhiInfo:
             "image_count": self.image_count,
             "last_used": self.last_used,
             "description": self.description,
+            "aliases": self.aliases,
         }
 
     @classmethod
@@ -44,6 +46,7 @@ class LaizhiInfo:
             image_count=data.get("image_count", 0),
             last_used=data.get("last_used"),
             description=data.get("description", ""),
+            aliases=data.get("aliases", []),
         )
 
 
@@ -104,6 +107,7 @@ class LaizhiDB:
         image_count: int = None,
         last_used: bool = True,
         description: str = None,
+        aliases: list[str] = None,
     ) -> bool:
         """更新来只信息"""
         data = await self._load_data()
@@ -116,7 +120,8 @@ class LaizhiDB:
             data[name]["last_used"] = datetime.now().isoformat()
         if description is not None:
             data[name]["description"] = description
-
+        if aliases is not None:
+            data[name]["aliases"] = aliases
         await self._save_data(data)
         return True
 
