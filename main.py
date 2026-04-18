@@ -117,9 +117,9 @@ class MyPlugin(Star):
         if result:
             yield result
 
-    @filter.regex(r"^删除(\S+)$")
+    @filter.command("删除")
     async def handle_delete(self, event: AstrMessageEvent):
-        """处理删除命令"""
+        """处理删除命令 - 回复图片删除该图片"""
         result = await self.handlers.handle_delete(event)
         if result:
             yield result

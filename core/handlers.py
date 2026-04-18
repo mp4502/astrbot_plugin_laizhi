@@ -27,11 +27,11 @@ class LaizhiHandlers:
         name = event.message_str.removeprefix("新建")
         real_name = await self.db.resolve_name(name)
         if real_name:
-            return event.plain_result(f"来只 '{name}' 已存在！")
+            return event.plain_result(f"图库 '{name}' 已存在！")
 
         success = await self.db.add_laizhi(name)
         if success:
-            return event.plain_result(f"新建来只 '{name}' 成功！")
+            return event.plain_result(f"新建 '{name}' 成功！")
         else:
             return event.plain_result(f"新建 '{name}' 失败！")
 
@@ -40,7 +40,7 @@ class LaizhiHandlers:
         name = event.message_str.removeprefix("来只")
         real_name = await self.db.resolve_name(name)
         if not real_name:
-            return event.plain_result(f"未找到来只 '{name}'，请先使用 '新建{name}' 创建！")
+            return event.plain_result(f"未找到 '{name}'，请先使用 '新建{name}' 创建！")
 
         # 更新最后使用时间
         await self.db.update_laizhi(real_name, last_used=True)
@@ -59,25 +59,14 @@ class LaizhiHandlers:
                 laizhi_info = await self.db.get_laizhi(real_name)
                 aliases_str = ", ".join(laizhi_info.aliases) if laizhi_info.aliases else "无"
                 return event.plain_result(
-                    f"来只 '{real_name}' 信息：\n"
-                    f"创建时间: {laizhi_info.created_at}\n"
-                    f"图片数量: {laizhi_info.image_count}\n"
-                    f"最后使用: {laizhi_info.last_used}\n"
-                    f"别名: {aliases_str}\n"
-                    f"描述: {laizhi_info.description or '无'}\n\n"
-                    f"提示: 该来只暂无图片，使用 '添加{real_name}' 来添加图片"
+                    f"提示: 该图库暂无图片，使用 '添加{real_name}' 来添加图片"
                 )
         else:
             # 没有图片数据库时的逻辑
             laizhi_info = await self.db.get_laizhi(real_name)
             aliases_str = ", ".join(laizhi_info.aliases) if laizhi_info.aliases else "无"
             return event.plain_result(
-                f"来只 '{real_name}' 信息：\n"
-                f"创建时间: {laizhi_info.created_at}\n"
-                f"图片数量: {laizhi_info.image_count}\n"
-                f"最后使用: {laizhi_info.last_used}\n"
-                f"别名: {aliases_str}\n"
-                f"描述: {laizhi_info.description or '无'}"
+                f"图库 '{real_name}' 未创建"
             )
 
     async def handle_add(self, event: AstrMessageEvent):
@@ -85,7 +74,7 @@ class LaizhiHandlers:
         name = event.message_str.removeprefix("添加")
         real_name = await self.db.resolve_name(name)
         if not real_name:
-            return event.plain_result(f"来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
+            return event.plain_result(f"'{name}' 不存在，请先使用 '新建{name}' 创建！")
 
         # 检查图片数据库是否可用
         if not self.photo_db:
@@ -143,7 +132,7 @@ class LaizhiHandlers:
                 except:
                     pass
 
-            return event.plain_result(f"为 '{real_name}' 添加图片成功！{session_key}\n已保存到: {local_path}\n当前总数: {new_count}{session_info}")
+            return event.plain_result(f"添加图片成功！{session_key}\n当前总数: {new_count}{session_info}")
         else:
             return event.plain_result(f"图片下载失败: {image_url}")
 
@@ -159,7 +148,7 @@ class LaizhiHandlers:
 
         real_name = await self.db.resolve_name(name)
         if not real_name:
-            return event.plain_result(f"来只 '{name}' 不存在！")
+            return event.plain_result(f"'{name}' 不存在！")
 
         laizhi_info = await self.db.get_laizhi(real_name)
 
@@ -214,28 +203,72 @@ class LaizhiHandlers:
                 return event.plain_result(f"'{real_name}' 暂无别名")
 
     async def handle_delete(self, event: AstrMessageEvent):
-        """处理删除命令的业务逻辑"""
-        name = event.message_str.removeprefix("删除")
-        real_name = await self.db.resolve_name(name)
-        if not real_name:
-            return event.plain_result(f"来只 '{name}' 不存在！")
+        """处理删除命令的业务逻辑 - 回复图片删除该图片"""
+        from pathlib import Path
 
-        # 删除图片文件夹
-        if self.photo_db:
-            await self.photo_db.delete_laizhi_folder(real_name)
+        # 尝试获取图片URL或路径
+        image_url = None
+        image_file = None
 
-        success = await self.db.delete_laizhi(real_name)
-        if success:
-            return event.plain_result(f"删除来只 '{real_name}' 成功！（包括所有图片）")
-        else:
-            return event.plain_result(f"删除失败！")
+        # 1. 优先从图片上下文管理器获取
+        if self.image_context_manager:
+            try:
+                image_url = self.image_context_manager.get_recent_image(event)
+            except:
+                pass
+
+        # 2. 如果上下文管理器没有，尝试从消息中获取
+        if not image_url:
+            messages = event.get_messages()
+            for comp in messages:
+                if hasattr(comp, 'file') and comp.file:
+                    image_file = comp.file
+                    break
+                if hasattr(comp, 'url') and comp.url:
+                    image_url = comp.url
+                    break
+
+        if not image_url and not image_file:
+            return event.plain_result(f"使用方法：\n回复图片后发送 '删除' 即可删除该图片")
+
+        # 尝试从本地文件路径中提取来只名称
+        target_path = image_file if image_file else image_url
+
+        # 检查是否是本地路径
+        if target_path and ('images' in target_path or 'plugin_data' in target_path):
+            # 从路径中提取来只名称
+            # 路径格式: .../plugin_data/laizhi/images/<来只名称>/xxx.jpg
+            path_parts = Path(target_path).parts
+
+            try:
+                images_index = path_parts.index('images')
+                if images_index + 1 < len(path_parts):
+                    laizhi_name = path_parts[images_index + 1]
+                    real_name = await self.db.resolve_name(laizhi_name)
+
+                    if real_name:
+                        # 删除图片
+                        success = await self.photo_db.delete_image_by_url(real_name, target_path)
+                        if success:
+                            # 更新计数
+                            laizhi_info = await self.db.get_laizhi(real_name)
+                            new_count = max(0, laizhi_info.image_count - 1)
+                            await self.db.update_laizhi(real_name, image_count=new_count)
+                            return event.plain_result(f"删除图片成功！图库 '{real_name}' 剩余 {new_count} 张图片")
+                        else:
+                            return event.plain_result(f"删除图片失败！")
+            except (ValueError, IndexError):
+                pass
+
+        return event.plain_result(f"无法识别图片来源，请确保回复的是已添加的图片")
+
 
     async def handle_query(self, event: AstrMessageEvent):
         """处理查询命令的业务逻辑"""
         name = event.message_str.removeprefix("查询")
         real_name = await self.db.resolve_name(name)
         if not real_name:
-            return event.plain_result(f"未找到来只 '{name}'")
+            return event.plain_result(f"未找到 '{name}'")
 
         laizhi_info = await self.db.get_laizhi(real_name)
         aliases_str = ", ".join(laizhi_info.aliases) if laizhi_info.aliases else "无"
@@ -263,7 +296,7 @@ class LaizhiHandlers:
         if not all_laizhi:
             return event.plain_result("当前还没有该图库，使用 '新建<名称>' 来创建一个！")
         else:
-            response = f"来只列表 (共 {stats['total_laizhi']} 个):\n\n"
+            response = f"列表 (共 {stats['total_laizhi']} 个):\n\n"
             for laizhi in all_laizhi:
                 # 获取实际图片数量
                 actual_count = 0

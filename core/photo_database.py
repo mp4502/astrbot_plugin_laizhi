@@ -217,6 +217,76 @@ class PhotoDatabase:
             logger.error(f"删除图片异常: {e}")
             return False
 
+    async def delete_image_by_url(self, laizhi_name: str, image_url: str) -> bool:
+        """
+        根据图片URL删除对应的本地文件
+        :param laizhi_name: 来只名称
+        :param image_url: 图片URL或本地路径
+        :return: 删除成功返回True，失败返回False
+        """
+        try:
+            from urllib.parse import urlparse
+
+            folder_path = self._get_laizhi_folder(laizhi_name)
+
+            if not folder_path.exists():
+                logger.warning(f"来只 '{laizhi_name}' 的图片文件夹不存在")
+                return False
+
+            image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+
+            # 检查是否是本地路径
+            if image_url.startswith(('file://', '/', '\\')) or 'plugin_data' in image_url or 'images' in image_url:
+                # 是本地路径
+                # 清理路径前缀
+                clean_path = image_url.replace('file://', '').replace('\\', '/')
+
+                # 提取文件名
+                filename = Path(clean_path).name
+
+                # 尝试删除该文件
+                image_path = folder_path / filename
+                if image_path.exists():
+                    image_path.unlink()
+                    logger.info(f"根据本地路径删除图片成功: {image_path}")
+                    return True
+                else:
+                    logger.warning(f"文件不存在: {image_path}")
+                    return False
+            else:
+                # 是网络URL，尝试匹配文件名
+                parsed_url = urlparse(image_url)
+                url_filename = Path(parsed_url.path).name
+
+                # 如果URL有有效的文件名，尝试匹配
+                if url_filename and '.' in url_filename:
+                    test_path = folder_path / url_filename
+                    if test_path.exists():
+                        test_path.unlink()
+                        logger.info(f"根据URL删除图片成功: {test_path}")
+                        return True
+
+                # 如果无法匹配，删除最近的一张图片
+                image_files = [
+                    f for f in folder_path.iterdir()
+                    if f.is_file() and f.suffix.lower() in image_extensions
+                ]
+
+                if image_files:
+                    # 按修改时间排序，删除最新的
+                    image_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    latest_image = image_files[0]
+                    latest_image.unlink()
+                    logger.info(f"删除最近的图片: {latest_image}")
+                    return True
+                else:
+                    logger.warning(f"没有找到可删除的图片")
+                    return False
+
+        except Exception as e:
+            logger.error(f"根据URL删除图片异常: {e}")
+            return False
+
     async def delete_all_images(self, laizhi_name: str) -> int:
         """
         删除来只的所有图片
