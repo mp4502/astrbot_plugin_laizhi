@@ -48,7 +48,7 @@ class SessionImages:
         sender_id: str | None = None,
     ) -> ImageInfo | None:
         """添加图片到会话。"""
-        if not url or not url.startswith(("http://", "https://")):
+        if not url:
             return None
 
         # URL 已存在时，视为最新一次出现并刷新顺序。

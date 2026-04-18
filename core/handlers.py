@@ -266,22 +266,35 @@ class LaizhiHandlers:
         image_url = None
         image_file = None
 
-        # 1. 优先从图片上下文管理器获取（现在会包含机器人发送的本地图片路径）
+        # 先输出调试信息
+        messages = event.get_messages()
+        logger.info(f"[删除] 收到 {len(messages)} 个消息组件")
+
+        for i, comp in enumerate(messages):
+            logger.info(f"[删除] 消息 {i}: 类型={type(comp).__name__}, hasattr(url)={hasattr(comp, 'url')}, hasattr(file)={hasattr(comp, 'file')}")
+            if hasattr(comp, 'url'):
+                logger.info(f"[删除]   url={comp.url}")
+            if hasattr(comp, 'file'):
+                logger.info(f"[删除]   file={comp.file}")
+
+        # 1. 优先从图片上下文管理器获取
         if self.image_context_manager:
             try:
                 image_url = self.image_context_manager.get_recent_image(event)
-            except:
-                pass
+                logger.info(f"[删除] 从上下文获取到图片: {image_url}")
+            except Exception as e:
+                logger.error(f"[删除] 从上下文获取图片失败: {e}")
 
         # 2. 如果上下文管理器没有，尝试从消息中获取
         if not image_url:
-            messages = event.get_messages()
             for comp in messages:
                 if hasattr(comp, 'file') and comp.file:
                     image_file = comp.file
+                    logger.info(f"[删除] 从消息组件获取到 file: {image_file}")
                     break
                 if hasattr(comp, 'url') and comp.url:
                     image_url = comp.url
+                    logger.info(f"[删除] 从消息组件获取到 url: {image_url}")
                     break
 
         if not image_url and not image_file:
@@ -289,6 +302,7 @@ class LaizhiHandlers:
 
         # 计算图片哈希
         target_path = image_file if image_file else image_url
+        logger.info(f"[删除] 目标路径: {target_path}")
 
         # 如果是本地路径，直接计算哈希（包含机器人发送的本地图片）
         if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/') or target_path.startswith('\\')):
@@ -303,6 +317,7 @@ class LaizhiHandlers:
                     sent_info = self.image_context_manager.get_sent_image_info(image_hash)
                     if sent_info:
                         session_id, laizhi_name, _ = sent_info
+                        logger.info(f"找到发送记录: session_id={session_id}, laizhi_name={laizhi_name}")
                         real_name = await self.db.resolve_name(laizhi_name, session_id)
 
                         if real_name:
@@ -333,7 +348,7 @@ class LaizhiHandlers:
                 return event.plain_result(f"删除图片失败！{str(e)}")
         else:
             logger.warning(f"无法处理图片来源: {target_path}")
-            return event.plain_result(f"删除图片失败！未找到本地图片路径，路径: {target_path}")
+            return event.plain_result(f"删除图片失败！未找到本地图片路径\n路径: {target_path}")
 
 
     async def handle_query(self, event: AstrMessageEvent):
