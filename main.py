@@ -12,6 +12,7 @@ from .core import (
     LaizhiHandlers,
     PhotoDatabase
 )
+from core.image_context import init_image_context_manager
 
 
 @register("laizhi", "mp4502", "AstrBot 来只图库插件 - 支持图片管理", "2.0.0")
@@ -24,6 +25,8 @@ class MyPlugin(Star):
         self.db = LaizhiDB()
         # 初始化图片数据库
         self.photo_db = PhotoDatabase()
+        # 初始化图片上下文管理器
+        self.image_context_manager = init_image_context_manager()
         # 初始化命令处理器
         self.handlers = None  # 将在 initialize 中设置
 
@@ -32,7 +35,7 @@ class MyPlugin(Star):
         await self.db.initialize()
         await self.photo_db.initialize()
         # 创建命令处理器实例，传递数据库实例
-        self.handlers = LaizhiHandlers(self.db, self.photo_db)
+        self.handlers = LaizhiHandlers(self.db, self.photo_db, self.image_context_manager)
         logger.info("来只插件数据库初始化完成")
 
     async def terminate(self):

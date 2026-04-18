@@ -10,14 +10,16 @@ import astrbot.api.message_components as Comp
 class LaizhiHandlers:
     """来只插件命令处理器"""
 
-    def __init__(self, db, photo_db=None):
+    def __init__(self, db, photo_db=None, image_context_manager=None):
         """
         初始化命令处理器
         :param db: LaizhiDB 数据库实例
         :param photo_db: PhotoDatabase 图片数据库实例
+        :param image_context_manager: 图片上下文管理器实例
         """
         self.db = db
         self.photo_db = photo_db
+        self.image_context_manager = image_context_manager
 
     async def handle_new(self, event: AstrMessageEvent):
         """处理新建命令的业务逻辑"""
@@ -79,44 +81,71 @@ class LaizhiHandlers:
             )
 
     async def handle_add(self, event: AstrMessageEvent):
-        """处理添加命令的业务逻辑"""
+        """处理添加命令的业务逻辑 - 从聊天记录中获取图片"""
         name = event.message_str.removeprefix("添加")
         real_name = await self.db.resolve_name(name)
         if not real_name:
             return event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
 
-        # 检查消息中是否包含URL
-        message_str = event.message_str
-        # 检查是否有额外的URL参数
-        import re
-        url_pattern = r'https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp)'
-        urls = re.findall(url_pattern, message_str, re.IGNORECASE)
+        # 检查图片数据库是否可用
+        if not self.photo_db:
+            return event.plain_result(f"❌ 图片数据库未初始化，无法添加图片")
 
-        if urls and self.photo_db:
-            # 下载第一张图片
-            image_url = urls[0]
-            local_path = await self.photo_db.download_image(real_name, image_url)
-            if local_path:
-                # 更新数据库中的图片计数
-                laizhi_info = await self.db.get_laizhi(real_name)
-                new_count = laizhi_info.image_count + 1
-                await self.db.update_laizhi(real_name, image_count=new_count)
-                return event.plain_result(f"✅ 为 '{real_name}' 添加图片成功！URL: {image_url}\n当前总数: {new_count}")
-            else:
-                return event.plain_result(f"❌ 图片下载失败: {image_url}")
-        else:
-            # 没有URL或没有图片数据库时的逻辑
+        # 尝试从图片上下文管理器获取最近的图片
+        image_url = None
+        session_info = ""
+
+        if self.image_context_manager:
+            try:
+                # 获取最近的图片URL
+                image_url = self.image_context_manager.get_recent_image(event)
+
+                if image_url:
+                    # 获取图片上下文信息
+                    context_info = self.image_context_manager.get_image_context_info(event)
+                    if context_info.get("has_images"):
+                        session_info = f"\n📋 会话图片数: {context_info['count']}"
+
+                logger.info(f"从图片上下文获取到图片: {image_url}")
+            except Exception as e:
+                logger.warning(f"从图片上下文获取图片失败: {e}")
+
+        # 如果上下文管理器中没有图片，尝试直接从消息中获取
+        if not image_url:
+            messages = event.get_messages()
+            for comp in messages:
+                # 检查是否是图片组件
+                if hasattr(comp, 'url') and comp.url:
+                    image_url = comp.url
+                    break
+                # 检查是否有 file 属性
+                if hasattr(comp, 'file') and comp.file:
+                    image_url = comp.file
+                    break
+
+        if not image_url:
+            return event.plain_result(f"❌ 未找到图片，请发送图片后使用 '添加{name}' 命令{session_info}")
+
+        # 下载并保存图片
+        local_path = await self.photo_db.download_image(real_name, image_url)
+        if local_path:
+            # 更新数据库中的图片计数
             laizhi_info = await self.db.get_laizhi(real_name)
             new_count = laizhi_info.image_count + 1
             await self.db.update_laizhi(real_name, image_count=new_count)
 
-            if self.photo_db:
-                return event.plain_result(
-                    f"✅ 为 '{real_name}' 图片计数+1！当前总数: {new_count}\n"
-                    f"💡 提示: 使用 '添加{real_name} <图片URL>' 来下载和存储图片"
-                )
-            else:
-                return event.plain_result(f"✅ 为 '{real_name}' 添加图片成功！当前总数: {new_count}")
+            # 获取会话标识信息
+            session_key = ""
+            if self.image_context_manager:
+                try:
+                    session_key_info = self.image_context_manager._get_session_key(event)
+                    session_key = f"\n🆔 会话: {session_key_info}"
+                except:
+                    pass
+
+            return event.plain_result(f"✅ 为 '{real_name}' 添加图片成功！{session_key}\n📁 已保存到: {local_path}\n当前总数: {new_count}{session_info}")
+        else:
+            return event.plain_result(f"❌ 图片下载失败: {image_url}")
 
     async def handle_alias(self, event: AstrMessageEvent):
         """处理别名命令的业务逻辑"""
