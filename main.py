@@ -117,6 +117,7 @@ class MyPlugin(Star):
         if result:
             yield result
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("删除")
     async def handle_delete(self, event: AstrMessageEvent):
         """处理删除命令 - 回复机器人发送的图片即可删除"""
@@ -124,6 +125,7 @@ class MyPlugin(Star):
         if result:
             yield result
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.regex(r"^查询(\S+)$")
     async def handle_query(self, event: AstrMessageEvent):
         """处理查询命令"""
