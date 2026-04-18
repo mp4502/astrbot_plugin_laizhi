@@ -276,26 +276,41 @@ class PhotoDatabase:
                 clean_path = image_url.replace('file://', '').replace('\\', '/')
                 image_path = Path(clean_path)
 
+                # 尝试读取文件内容计算哈希
                 if image_path.exists():
                     # 读取文件内容计算哈希
                     async with aiofiles.open(image_path, 'rb') as f:
                         content = await f.read()
                     image_hash = self._calculate_hash(content)
-
-                    # 根据哈希值查找并删除文件（尝试所有扩展名）
-                    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
-                    for ext in image_extensions:
-                        hash_path = folder_path / f"{image_hash[:8]}{ext}"
-                        if hash_path.exists():
-                            hash_path.unlink()
-                            logger.info(f"根据本地路径删除图片成功: {hash_path}")
-                            return image_hash
-
-                    logger.warning(f"未找到哈希匹配的文件: {image_hash[:8]}")
-                    return None
                 else:
-                    logger.warning(f"本地文件不存在: {image_path}")
-                    return None
+                    # 文件不存在，尝试从文件名提取哈希（如果是哈希文件名）
+                    filename = image_path.stem  # 获取不带扩展名的文件名
+                    if len(filename) == 8 and all(c in '0123456789abcdefABCDEF' for c in filename):
+                        # 这是一个哈希文件名，但需要完整的 SHA256 哈希
+                        # 这种情况下无法确定完整哈希，返回特殊标记
+                        logger.warning(f"文件不存在且无法从哈希文件名推断完整哈希: {image_path}")
+                        return None
+                    else:
+                        logger.warning(f"本地文件不存在且不是哈希文件名: {image_path}")
+                        return None
+
+                # 根据哈希值查找并删除文件（尝试所有扩展名）
+                image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+                deleted = False
+                for ext in image_extensions:
+                    hash_path = folder_path / f"{image_hash[:8]}{ext}"
+                    if hash_path.exists():
+                        hash_path.unlink()
+                        logger.info(f"根据本地路径删除图片成功: {hash_path}")
+                        deleted = True
+                        break  # 找到并删除后退出循环
+
+                # 即使文件不存在，只要能计算出哈希，就返回哈希值以便更新数据库
+                if deleted:
+                    return image_hash
+                else:
+                    logger.warning(f"未找到哈希匹配的文件，但返回哈希用于数据库更新: {image_hash[:8]}")
+                    return image_hash
 
             # 2. 如果是网络URL，下载并计算哈希后删除
             async with aiohttp.ClientSession() as session:

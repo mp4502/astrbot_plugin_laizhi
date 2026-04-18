@@ -159,8 +159,8 @@ class LaizhiHandlers:
 
             # 获取添加者信息
             from datetime import datetime
-            adder_name = getattr(event, 'sender_name', '') or getattr(event, 'nickname', '') or ''
-            adder_qq = str(getattr(event, 'user_id', ''))
+            adder_name = event.sender_name
+            adder_qq = event.sender_id
 
             # 创建图片信息
             from .database import ImageInfo
