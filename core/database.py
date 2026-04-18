@@ -5,9 +5,23 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
+from dataclasses import dataclass, field
 
 from astrbot.api import logger
+
+
+@dataclass
+class ImageInfo:
+    """图片信息"""
+    hash: str
+    adder_name: str = ""
+    adder_qq: str = ""
+    add_time: str = ""
+    file_path: str = ""
+
+
+@dataclass
 
 
 class LaizhiInfo:
@@ -22,6 +36,7 @@ class LaizhiInfo:
         description: str = "",
         aliases: list = None,
         image_hashes: list = None,
+        image_infos: list = None,
     ):
         self.name = name
         self.created_at = created_at or datetime.now().isoformat()
@@ -29,7 +44,8 @@ class LaizhiInfo:
         self.last_used = last_used or datetime.now().isoformat()
         self.description = description
         self.aliases = aliases or []
-        self.image_hashes = image_hashes or []
+        self.image_hashes = image_hashes or []  # 保留用于兼容
+        self.image_infos = image_infos or []  # 新的图片信息列表
 
     def to_dict(self) -> dict:
         """转换为字典"""
@@ -41,11 +57,36 @@ class LaizhiInfo:
             "description": self.description,
             "aliases": self.aliases,
             "image_hashes": self.image_hashes,
+            "image_infos": [self._image_info_to_dict(info) for info in self.image_infos],
+        }
+
+    def _image_info_to_dict(self, info: ImageInfo) -> dict:
+        """将 ImageInfo 转换为字典"""
+        if isinstance(info, dict):
+            return info
+        return {
+            "hash": info.hash,
+            "adder_name": info.adder_name,
+            "adder_qq": info.adder_qq,
+            "add_time": info.add_time,
+            "file_path": info.file_path,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "LaizhiInfo":
         """从字典创建实例"""
+        # 兼容旧数据
+        image_infos = []
+        if "image_infos" in data and data["image_infos"]:
+            for info_data in data["image_infos"]:
+                image_infos.append(ImageInfo(
+                    hash=info_data.get("hash", ""),
+                    adder_name=info_data.get("adder_name", ""),
+                    adder_qq=info_data.get("adder_qq", ""),
+                    add_time=info_data.get("add_time", ""),
+                    file_path=info_data.get("file_path", ""),
+                ))
+
         return cls(
             name=data["name"],
             created_at=data.get("created_at"),
@@ -54,6 +95,7 @@ class LaizhiInfo:
             description=data.get("description", ""),
             aliases=data.get("aliases", []),
             image_hashes=data.get("image_hashes", []),
+            image_infos=image_infos,
         )
 
 
@@ -145,6 +187,28 @@ class LaizhiDB:
         data[name]["image_hashes"] = hashes
         await self._save_data(data, session_id)
         return True
+
+    async def _update_image_infos(self, name: str, image_infos: list, session_id: str = "default") -> bool:
+        """更新图片信息列表"""
+        data = await self._load_data(session_id)
+        if name not in data:
+            return False
+
+        data[name]["image_infos"] = [self._image_info_to_dict(None, info) for info in image_infos]
+        await self._save_data(data, session_id)
+        return True
+
+    def _image_info_to_dict(self, _, info: ImageInfo) -> dict:
+        """将 ImageInfo 转换为字典（静态方法版本）"""
+        if isinstance(info, dict):
+            return info
+        return {
+            "hash": info.hash,
+            "adder_name": info.adder_name,
+            "adder_qq": info.adder_qq,
+            "add_time": info.add_time,
+            "file_path": info.file_path,
+        }
 
     async def delete_laizhi(self, name: str, session_id: str = "default") -> bool:
         """删除来只"""

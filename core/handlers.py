@@ -4,8 +4,8 @@
 """
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
-import astrbot.api.message_components as Comp
 from .image_context import get_image_context_manager
+from .database import ImageInfo
 
 
 class LaizhiHandlers:
@@ -51,14 +51,17 @@ class LaizhiHandlers:
         if self.photo_db:
             image_path = await self.photo_db.get_random_image(real_name, session_id)
             if image_path:
+                # 获取图片信息用于记录
+                laizhi_info = await self.db.get_laizhi(real_name, session_id)
+
+                # 计算图片哈希
+                import hashlib
+                with open(image_path, 'rb') as f:
+                    image_hash = hashlib.sha256(f.read()).hexdigest()
+
                 # 记录发送的图片信息：图片路径 -> 图库名映射
                 if self.image_context_manager:
                     try:
-                        # 计算图片哈希（使用文件路径）
-                        import hashlib
-                        with open(image_path, 'rb') as f:
-                            image_hash = hashlib.sha256(f.read()).hexdigest()
-
                         # 记录映射：图片哈希 -> (session_id, laizhi_name)
                         self.image_context_manager.add_sent_image(
                             event,
@@ -147,13 +150,30 @@ class LaizhiHandlers:
             if image_hash in laizhi_info.image_hashes:
                 return event.plain_result(f"该图片已存在！图库 '{real_name}' 当前总数: {laizhi_info.image_count}")
 
-            # 更新数据库中的图片计数和哈希列表
+            # 获取添加者信息
+            from datetime import datetime
+            adder_name = getattr(event, 'sender_name', '') or getattr(event, 'nickname', '') or ''
+            adder_qq = str(getattr(event, 'user_id', ''))
+
+            # 创建图片信息
+            from .database import ImageInfo
+            image_info = ImageInfo(
+                hash=image_hash,
+                adder_name=adder_name,
+                adder_qq=adder_qq,
+                add_time=datetime.now().isoformat(),
+                file_path=local_path
+            )
+
+            # 更新数据库中的图片计数、哈希列表和图片信息
             new_count = laizhi_info.image_count + 1
             new_hashes = laizhi_info.image_hashes + [image_hash]
+            new_image_infos = laizhi_info.image_infos + [image_info]
             await self.db.update_laizhi(real_name, session_id, image_count=new_count)
             await self.db._update_hashes(real_name, new_hashes, session_id)
+            await self.db._update_image_infos(real_name, new_image_infos, session_id)
 
-            logger.info(f"成功添加图片到 '{real_name}', 哈希: {image_hash[:8]}, 路径: {local_path}, 当前总数: {new_count}")
+            logger.info(f"成功添加图片到 '{real_name}', 添加者: {adder_name}({adder_qq}), 哈希: {image_hash[:8]}, 当前总数: {new_count}")
             return event.plain_result(f"添加图片成功！\n当前总数: {new_count}{session_info}")
         else:
             return event.plain_result(f"图片下载失败: {image_url}")
@@ -274,13 +294,23 @@ class LaizhiHandlers:
                             # 删除图片
                             deleted_hash = await self.photo_db.delete_image_by_url(real_name, target_path, session_id)
                             if deleted_hash:
-                                # 更新计数和哈希列表
+                                # 更新计数、哈希列表和图片信息
                                 laizhi_info = await self.db.get_laizhi(real_name, session_id)
                                 new_count = max(0, laizhi_info.image_count - 1)
                                 new_hashes = [h for h in laizhi_info.image_hashes if h != deleted_hash]
+                                new_image_infos = [info for info in laizhi_info.image_infos if info.hash != deleted_hash]
                                 await self.db.update_laizhi(real_name, session_id, image_count=new_count)
                                 await self.db._update_hashes(real_name, new_hashes, session_id)
-                                return event.plain_result(f"删除图片成功！图库 '{real_name}' 剩余 {new_count} 张图片")
+                                await self.db._update_image_infos(real_name, new_image_infos, session_id)
+
+                                # 获取删除的图片添加者信息
+                                deleted_info = next((info for info in laizhi_info.image_infos if info.hash == deleted_hash), None)
+                                adder_msg = ""
+                                if deleted_info:
+                                    adder_name = deleted_info.adder_name or "未知"
+                                    adder_msg = f"（添加者: {adder_name}）"
+
+                                return event.plain_result(f"删除图片成功{adder_msg}！图库 '{real_name}' 剩余 {new_count} 张图片")
 
                 return event.plain_result(f"删除图片失败！未找到该图片的发送记录，只能删除机器人发送的图片")
             except Exception as e:
@@ -335,3 +365,80 @@ class LaizhiHandlers:
                 response += f"- {laizhi.name} - 计数: {laizhi.image_count}, 实际文件: {actual_count}\n"
             response += f"\n使用 '查询<名称>' 查看详细信息，'来只<名称>' 随机获取图片"
             return event.plain_result(response)
+
+    async def handle_who_added(self, event: AstrMessageEvent):
+        """处理'谁添加的'命令 - 查询图片添加者信息"""
+        import hashlib
+
+        # 尝试获取图片URL或路径
+        image_url = None
+        image_file = None
+
+        # 1. 优先从图片上下文管理器获取
+        if self.image_context_manager:
+            try:
+                image_url = self.image_context_manager.get_recent_image(event)
+            except:
+                pass
+
+        # 2. 如果上下文管理器没有，尝试从消息中获取
+        if not image_url:
+            messages = event.get_messages()
+            for comp in messages:
+                if hasattr(comp, 'file') and comp.file:
+                    image_file = comp.file
+                    break
+                if hasattr(comp, 'url') and comp.url:
+                    image_url = comp.url
+                    break
+
+        if not image_url and not image_file:
+            return event.plain_result(f"使用方法：\n回复机器人发送的图片后发送 '谁添加的' 查询添加者信息")
+
+        # 计算图片哈希
+        target_path = image_file if image_file else image_url
+
+        # 如果是本地路径，直接计算哈希
+        if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/')):
+            try:
+                with open(target_path, 'rb') as f:
+                    image_hash = hashlib.sha256(f.read()).hexdigest()
+
+                # 查询机器人发送的图片记录
+                if self.image_context_manager:
+                    sent_info = self.image_context_manager.get_sent_image_info(image_hash)
+                    if sent_info:
+                        session_id, laizhi_name, _ = sent_info
+                        real_name = await self.db.resolve_name(laizhi_name, session_id)
+
+                        if real_name:
+                            # 查找添加者信息
+                            laizhi_info = await self.db.get_laizhi(real_name, session_id)
+                            for img_info in laizhi_info.image_infos:
+                                if img_info.hash == image_hash:
+                                    adder_name = img_info.adder_name or "未知"
+                                    adder_qq = img_info.adder_qq or "未知"
+                                    add_time = img_info.add_time or "未知"
+
+                                    # 格式化时间显示
+                                    try:
+                                        from datetime import datetime
+                                        dt = datetime.fromisoformat(add_time)
+                                        time_str = dt.strftime("%Y-%m-%d %H:%M")
+                                    except:
+                                        time_str = add_time
+
+                                    return event.plain_result(
+                                        f"图片信息：\n"
+                                        f"图库: {real_name}\n"
+                                        f"添加者: {adder_name}\n"
+                                        f"QQ号: {adder_qq}\n"
+                                        f"添加时间: {time_str}"
+                                    )
+
+                return event.plain_result(f"未找到该图片的添加记录，只能查询机器人发送的图片")
+            except Exception as e:
+                logger.error(f"查询添加者异常: {e}")
+                return event.plain_result(f"查询失败！{str(e)}")
+        else:
+            return event.plain_result(f"查询失败！只支持查询机器人发送的图片")
