@@ -51,8 +51,7 @@ class LaizhiHandlers:
             if image_path:
                 # 发送图片
                 try:
-                    await Comp.Image.fromFileSystem(image_path)
-                    return event.plain_result(f"📸 来自 '{real_name}' 的图片")
+                    return event.image_result(image_path)
                 except Exception as e:
                     logger.error(f"发送图片失败: {e}")
                     return event.plain_result(f"❌ 发送图片失败: {str(e)}")
