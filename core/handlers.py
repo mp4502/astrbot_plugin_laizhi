@@ -133,6 +133,7 @@ class LaizhiHandlers:
                     pass
 
             return event.plain_result(f"添加图片成功！{session_key}\n当前总数: {new_count}{session_info}")
+            logger.info(f"成功添加图片到 '{real_name}',添加路径为 '{local_path}'，当前总数: {new_count}")
         else:
             return event.plain_result(f"图片下载失败: {image_url}")
 
