@@ -18,12 +18,14 @@ class LaizhiInfo:
         image_count: int = 0,
         last_used: str = None,
         description: str = "",
+        aliases: list = None,
     ):
         self.name = name
         self.created_at = created_at or datetime.now().isoformat()
         self.image_count = image_count
         self.last_used = last_used or datetime.now().isoformat()
         self.description = description
+        self.aliases = aliases or []
 
     def to_dict(self) -> dict:
         """转换为字典"""
@@ -33,6 +35,7 @@ class LaizhiInfo:
             "image_count": self.image_count,
             "last_used": self.last_used,
             "description": self.description,
+            "aliases": self.aliases,
         }
 
     @classmethod
@@ -44,6 +47,7 @@ class LaizhiInfo:
             image_count=data.get("image_count", 0),
             last_used=data.get("last_used"),
             description=data.get("description", ""),
+            aliases=data.get("aliases", []),
         )
 
 
@@ -152,6 +156,23 @@ class LaizhiDB:
             ),
         }
 
+    async def add_alias(self, name: str, alias: str) -> bool:
+        """添加别名"""
+        data = await self._load_data()
+        if name not in data:
+            return False
+        if "aliases" not in data[name]:
+            data[name]["aliases"] = []
+        if alias not in data[name]["aliases"]:
+            data[name]["aliases"].append(alias)
+        await self._save_data(data)
+        return True
+
+    async def get_aliases(self, name: str) -> list:
+        """获取别名列表"""
+        laizhi_info = await self.get_laizhi(name)
+        return laizhi_info.aliases if laizhi_info else []
+
     async def _load_data(self) -> dict:
         """加载数据"""
         if not self.db_path.exists():
@@ -204,11 +225,13 @@ class MyPlugin(Star):
         if laizhi_info:
             # 更新最后使用时间
             await self.db.update_laizhi(name, last_used=True)
+            aliases_str = ", ".join(laizhi_info.aliases) if laizhi_info.aliases else "无"
             yield event.plain_result(
                 f"📸 来只 '{name}' 信息：\n"
                 f"创建时间: {laizhi_info.created_at}\n"
                 f"图片数量: {laizhi_info.image_count}\n"
                 f"最后使用: {laizhi_info.last_used}\n"
+                f"别名: {aliases_str}\n"
                 f"描述: {laizhi_info.description or '无'}"
             )
         else:
@@ -227,33 +250,40 @@ class MyPlugin(Star):
         else:
             yield event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
 
-    @filter.regex(r"^别名(\S+)$")
+    @filter.regex(r"^别名(\S+)(?:\s+(.+))?$")
     async def handle_alias(self, event: AstrMessageEvent):
-        """处理别名命令"""
-        name = event.message_str.removeprefix("别名")
-        laizhi_info = await self.db.get_laizhi(name)  # 验证来只是否存在
-        if not laizhi_info:
-            yield event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
+        """处理别名命令 - 支持查询和添加"""
+        import re
+        match = re.match(r"^别名(\S+)(?:\s+(.+))?$", event.message_str)
+        if not match:
             return
-        repr = ""
-        for i in range(len(laizhi_info.aliases)):
-            repr += f"• {laizhi_info.aliases[i]}\n"
-        yield event.plain_result(f"📋 '{name}' 的别名列表：\n{repr}")
 
-    @filter.regex(r"^别名(\S+)\s+(.+)$")
-    async def handle_alias(self, event: AstrMessageEvent):
-        """处理别名命令"""
-        name = event.message_str.removeprefix("别名")
-        alias = event.message_str.split(maxsplit=1)[1] if len(event.message_str.split()) > 1 else None
-        laizhi_info = await self.db.get_laizhi(name)  # 验证来只是否存在
+        name = match.group(1)
+        alias = match.group(2) if match.group(2) else None
+
+        laizhi_info = await self.db.get_laizhi(name)
         if not laizhi_info:
-            yield event.plain_result(f"❌ 来只 '{name}' 不存在，请先使用 '新建{name}' 创建！")
+            yield event.plain_result(f"❌ 来只 '{name}' 不存在！")
             return
+
         if alias:
-            await self.db.update_laizhi(name, aliases=laizhi_info.aliases + [alias])
-            yield event.plain_result(f"✅ 为 '{name}' 设置别名 '{alias}' 成功！")
+            # 添加别名
+            success = await self.db.add_alias(name, alias)
+            if success:
+                if alias in laizhi_info.aliases:
+                    yield event.plain_result(f"⚠️ 别名 '{alias}' 已存在！")
+                else:
+                    yield event.plain_result(f"✅ 为 '{name}' 添加别名 '{alias}' 成功！")
+            else:
+                yield event.plain_result(f"❌ 添加别名失败！")
         else:
-            yield event.plain_result(f"❌ 未提供别名，请使用 '别名{name} <别名>' 格式！")
+            # 查询别名
+            aliases = await self.db.get_aliases(name)
+            if aliases:
+                alias_list = "\n".join(f"• {alias}" for alias in aliases)
+                yield event.plain_result(f"📋 '{name}' 的别名列表：\n{alias_list}")
+            else:
+                yield event.plain_result(f"📋 '{name}' 暂无别名")
 
     @filter.regex(r"^删除(\S+)$")
     async def handle_delete(self, event: AstrMessageEvent):
@@ -271,11 +301,13 @@ class MyPlugin(Star):
         name = event.message_str.removeprefix("查询")
         laizhi_info = await self.db.get_laizhi(name)
         if laizhi_info:
+            aliases_str = ", ".join(laizhi_info.aliases) if laizhi_info.aliases else "无"
             yield event.plain_result(
                 f"📋 查询结果 - '{name}'：\n"
                 f"创建时间: {laizhi_info.created_at}\n"
                 f"图片数量: {laizhi_info.image_count}\n"
                 f"最后使用: {laizhi_info.last_used}\n"
+                f"别名: {aliases_str}\n"
                 f"描述: {laizhi_info.description or '无'}"
             )
         else:
