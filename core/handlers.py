@@ -51,6 +51,25 @@ class LaizhiHandlers:
         if self.photo_db:
             image_path = await self.photo_db.get_random_image(real_name, session_id)
             if image_path:
+                # 记录发送的图片信息：图片路径 -> 图库名映射
+                if self.image_context_manager:
+                    try:
+                        # 计算图片哈希（使用文件路径）
+                        import hashlib
+                        with open(image_path, 'rb') as f:
+                            image_hash = hashlib.sha256(f.read()).hexdigest()
+
+                        # 记录映射：图片哈希 -> (session_id, laizhi_name)
+                        self.image_context_manager.add_sent_image(
+                            event,
+                            image_hash,
+                            real_name,
+                            image_path
+                        )
+                        logger.info(f"记录发送图片: 哈希={image_hash[:8]}, 图库={real_name}")
+                    except Exception as e:
+                        logger.warning(f"记录图片映射失败: {e}")
+
                 # 发送图片
                 try:
                     return event.image_result(image_path)
@@ -207,9 +226,8 @@ class LaizhiHandlers:
                 return event.plain_result(f"'{real_name}' 暂无别名")
 
     async def handle_delete(self, event: AstrMessageEvent):
-        """处理删除命令的业务逻辑 - 回复图片删除该图片"""
-        session_id = event.session_id
-        from pathlib import Path
+        """处理删除命令的业务逻辑 - 回复机器人发送的图片即可删除"""
+        import hashlib
 
         # 尝试获取图片URL或路径
         image_url = None
@@ -234,44 +252,42 @@ class LaizhiHandlers:
                     break
 
         if not image_url and not image_file:
-            return event.plain_result(f"使用方法：\n回复图片后发送 '删除' 即可删除该图片")
+            return event.plain_result(f"使用方法：\n回复机器人发送的图片后发送 '删除' 即可删除")
 
-        # 尝试从本地文件路径中提取来只名称
+        # 计算图片哈希
         target_path = image_file if image_file else image_url
 
-        # 检查是否是本地路径
-        if target_path and ('images' in target_path or 'plugin_data' in target_path):
-            # 从路径中提取来只名称和会话ID
-            # 路径格式: .../plugin_data/laizhi/images/<session_id>/<来只名称>/xxx.jpg
-            path_parts = Path(target_path).parts
-
+        # 如果是本地路径，直接计算哈希
+        if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/')):
             try:
-                images_index = path_parts.index('images')
-                if images_index + 2 < len(path_parts):
-                    path_session_id = path_parts[images_index + 1]
-                    laizhi_name = path_parts[images_index + 2]
+                with open(target_path, 'rb') as f:
+                    image_hash = hashlib.sha256(f.read()).hexdigest()
 
-                    # 验证会话ID是否匹配
-                    if path_session_id == session_id:
+                # 查询机器人发送的图片记录
+                if self.image_context_manager:
+                    sent_info = self.image_context_manager.get_sent_image_info(image_hash)
+                    if sent_info:
+                        session_id, laizhi_name, _ = sent_info
                         real_name = await self.db.resolve_name(laizhi_name, session_id)
 
                         if real_name:
-                            # 删除图片并获取哈希值
-                            image_hash = await self.photo_db.delete_image_by_url(real_name, target_path, session_id)
-                            if image_hash:
+                            # 删除图片
+                            deleted_hash = await self.photo_db.delete_image_by_url(real_name, target_path, session_id)
+                            if deleted_hash:
                                 # 更新计数和哈希列表
                                 laizhi_info = await self.db.get_laizhi(real_name, session_id)
                                 new_count = max(0, laizhi_info.image_count - 1)
-                                new_hashes = [h for h in laizhi_info.image_hashes if h != image_hash]
+                                new_hashes = [h for h in laizhi_info.image_hashes if h != deleted_hash]
                                 await self.db.update_laizhi(real_name, session_id, image_count=new_count)
                                 await self.db._update_hashes(real_name, new_hashes, session_id)
                                 return event.plain_result(f"删除图片成功！图库 '{real_name}' 剩余 {new_count} 张图片")
-                            else:
-                                return event.plain_result(f"删除图片失败！未找到匹配的图片")
-            except (ValueError, IndexError):
-                pass
 
-        return event.plain_result(f"无法识别图片来源，请确保回复的是已添加的图片")
+                return event.plain_result(f"删除图片失败！未找到该图片的发送记录，只能删除机器人发送的图片")
+            except Exception as e:
+                logger.error(f"删除图片异常: {e}")
+                return event.plain_result(f"删除图片失败！{str(e)}")
+        else:
+            return event.plain_result(f"删除图片失败！只支持删除机器人发送的图片")
 
 
     async def handle_query(self, event: AstrMessageEvent):

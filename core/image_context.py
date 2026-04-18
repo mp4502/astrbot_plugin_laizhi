@@ -146,6 +146,9 @@ class ImageContextManager:
         self._sessions: OrderedDict[str, SessionImages] = OrderedDict()
         self._global_session = SessionImages(max_images=self.max_images_per_session)
 
+        # 记录机器人发送的图片：图片哈希 -> (session_id, laizhi_name, image_path)
+        self._sent_images: dict[str, tuple[str, str, str]] = {}
+
         # 使用同步锁保护共享结构，避免并发读写导致状态抖动。
         self._lock = threading.RLock()
 
@@ -373,6 +376,38 @@ class ImageContextManager:
         with self._lock:
             self._global_session.clear()
             self._sessions.clear()
+
+    def add_sent_image(
+        self,
+        event: Any,
+        image_hash: str,
+        laizhi_name: str,
+        image_path: str,
+    ) -> None:
+        """记录机器人发送的图片信息。
+
+        Args:
+            event: 消息事件
+            image_hash: 图片的SHA256哈希值
+            laizhi_name: 图库名称
+            image_path: 图片文件路径
+        """
+        with self._lock:
+            session_id = self._get_session_key(event)
+            self._sent_images[image_hash] = (session_id, laizhi_name, image_path)
+            logger.debug(f"[ImageContext] 记录发送图片: {image_hash[:8]} -> {laizhi_name}")
+
+    def get_sent_image_info(self, image_hash: str) -> tuple[str, str, str] | None:
+        """查询机器人发送的图片信息。
+
+        Args:
+            image_hash: 图片的SHA256哈希值
+
+        Returns:
+            (session_id, laizhi_name, image_path) 或 None
+        """
+        with self._lock:
+            return self._sent_images.get(image_hash)
 
 
 # 全局图片上下文管理器实例

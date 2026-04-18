@@ -119,7 +119,7 @@ class MyPlugin(Star):
 
     @filter.command("删除")
     async def handle_delete(self, event: AstrMessageEvent):
-        """处理删除命令 - 回复图片删除该图片"""
+        """处理删除命令 - 回复机器人发送的图片即可删除"""
         result = await self.handlers.handle_delete(event)
         if result:
             yield result
