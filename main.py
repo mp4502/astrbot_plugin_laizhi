@@ -10,9 +10,10 @@ import astrbot.api.message_components as Comp
 from .core import (
     LaizhiDB,
     LaizhiHandlers,
-    PhotoDatabase
+    PhotoDatabase,
+    ImageContextManager
 )
-from .core.image_context import init_image_context_manager
+from .core.image_context import init_image_context_manager, get_image_context_manager
 
 
 @register("laizhi", "mp4502", "AstrBot 来只图库插件 - 支持图片管理", "2.0.0")
@@ -41,6 +42,30 @@ class MyPlugin(Star):
     async def terminate(self):
         """插件销毁方法"""
         logger.info("来只插件已停止")
+
+    # ==================================================================
+    # 消息监听器 - 捕获图片到上下文
+    # ==================================================================
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        """监听所有消息，捕获图片到上下文."""
+        messages = event.get_messages()
+        image_ctx = get_image_context_manager()
+
+        for comp in messages:
+            if isinstance(comp, Image):
+                # 获取图片 URL
+                url = comp.url or comp.file
+                if url and url.startswith(("http://", "https://")):
+                    image_ctx.add_image(
+                        event,
+                        url,
+                        message_id=str(getattr(event, "message_id", "")),
+                        sender_id=str(getattr(event, "user_id", "")),
+                    )
+                    logger.debug(f"[ImgExploration] 捕获图片到上下文: {url[:50]}...")
+
 
     # ==================== 核心命令 ====================
 

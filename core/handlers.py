@@ -5,6 +5,7 @@
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
 import astrbot.api.message_components as Comp
+from .image_context import get_image_context_manager
 
 
 class LaizhiHandlers:
