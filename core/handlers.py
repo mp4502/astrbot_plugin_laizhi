@@ -116,12 +116,20 @@ class LaizhiHandlers:
             return event.plain_result(f"未找到图片，请发送图片后使用 '添加{name}' 命令{session_info}")
 
         # 下载并保存图片
-        local_path = await self.photo_db.download_image(real_name, image_url)
-        if local_path:
-            # 更新数据库中的图片计数
+        download_result = await self.photo_db.download_image(real_name, image_url)
+        if download_result:
+            local_path, image_hash = download_result
+
+            # 检查图片是否已存在（通过哈希值）
             laizhi_info = await self.db.get_laizhi(real_name)
+            if image_hash in laizhi_info.image_hashes:
+                return event.plain_result(f"该图片已存在！图库 '{real_name}' 当前总数: {laizhi_info.image_count}")
+
+            # 更新数据库中的图片计数和哈希列表
             new_count = laizhi_info.image_count + 1
+            new_hashes = laizhi_info.image_hashes + [image_hash]
             await self.db.update_laizhi(real_name, image_count=new_count)
+            await self.db._update_hashes(real_name, new_hashes)
 
             # 获取会话标识信息
             session_key = ""
@@ -132,8 +140,8 @@ class LaizhiHandlers:
                 except:
                     pass
 
+            logger.info(f"成功添加图片到 '{real_name}', 哈希: {image_hash[:8]}, 路径: {local_path}, 当前总数: {new_count}")
             return event.plain_result(f"添加图片成功！{session_key}\n当前总数: {new_count}{session_info}")
-            logger.info(f"成功添加图片到 '{real_name}',添加路径为 '{local_path}'，当前总数: {new_count}")
         else:
             return event.plain_result(f"图片下载失败: {image_url}")
 
@@ -248,16 +256,18 @@ class LaizhiHandlers:
                     real_name = await self.db.resolve_name(laizhi_name)
 
                     if real_name:
-                        # 删除图片
-                        success = await self.photo_db.delete_image_by_url(real_name, target_path)
-                        if success:
-                            # 更新计数
+                        # 删除图片并获取哈希值
+                        image_hash = await self.photo_db.delete_image_by_url(real_name, target_path)
+                        if image_hash:
+                            # 更新计数和哈希列表
                             laizhi_info = await self.db.get_laizhi(real_name)
                             new_count = max(0, laizhi_info.image_count - 1)
+                            new_hashes = [h for h in laizhi_info.image_hashes if h != image_hash]
                             await self.db.update_laizhi(real_name, image_count=new_count)
+                            await self.db._update_hashes(real_name, new_hashes)
                             return event.plain_result(f"删除图片成功！图库 '{real_name}' 剩余 {new_count} 张图片")
                         else:
-                            return event.plain_result(f"删除图片失败！")
+                            return event.plain_result(f"删除图片失败！未找到匹配的图片")
             except (ValueError, IndexError):
                 pass
 

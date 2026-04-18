@@ -34,12 +34,17 @@ class PhotoDatabase:
         folder_path = self.base_path / safe_name
         return folder_path
 
-    async def download_image(self, laizhi_name: str, image_url: str) -> Optional[str]:
+    def _calculate_hash(self, content: bytes) -> str:
+        """计算图片内容的哈希值"""
+        import hashlib
+        return hashlib.sha256(content).hexdigest()
+
+    async def download_image(self, laizhi_name: str, image_url: str) -> Optional[tuple]:
         """
         下载图片到本地
         :param laizhi_name: 来只名称
         :param image_url: 图片URL
-        :return: 下载成功返回本地文件路径，失败返回None
+        :return: 下载成功返回 (本地文件路径, 哈希值)，失败返回None
         """
         try:
             # 创建来只文件夹
@@ -72,12 +77,24 @@ class PhotoDatabase:
                     if response.status == 200:
                         content = await response.read()
 
-                        # 保存到本地
-                        async with aiofiles.open(local_path, 'wb') as f:
+                        # 计算哈希值
+                        image_hash = self._calculate_hash(content)
+
+                        # 使用哈希值作为文件名（前8位 + 原扩展名）
+                        hash_filename = f"{image_hash[:8]}{local_path.suffix}"
+                        hash_path = folder_path / hash_filename
+
+                        # 如果哈希文件名已存在，说明是重复图片
+                        if hash_path.exists():
+                            logger.info(f"图片已存在（哈希重复）: {hash_path}")
+                            return str(hash_path), image_hash
+
+                        # 保存到本地（使用哈希文件名）
+                        async with aiofiles.open(hash_path, 'wb') as f:
                             await f.write(content)
 
-                        logger.info(f"图片下载成功: {local_path}")
-                        return str(local_path)
+                        logger.info(f"图片下载成功: {hash_path}, 哈希: {image_hash[:8]}")
+                        return str(hash_path), image_hash
                     else:
                         logger.error(f"图片下载失败，HTTP状态码: {response.status}")
                         return None
@@ -217,75 +234,70 @@ class PhotoDatabase:
             logger.error(f"删除图片异常: {e}")
             return False
 
-    async def delete_image_by_url(self, laizhi_name: str, image_url: str) -> bool:
+    async def delete_image_by_url(self, laizhi_name: str, image_url: str) -> Optional[str]:
         """
-        根据图片URL删除对应的本地文件
+        根据图片URL计算哈希值并删除对应的本地文件
         :param laizhi_name: 来只名称
-        :param image_url: 图片URL或本地路径
-        :return: 删除成功返回True，失败返回False
+        :param image_url: 图片URL
+        :return: 删除成功返回图片哈希值，失败返回None
         """
         try:
-            from urllib.parse import urlparse
-
-            folder_path = self._get_laizhi_folder(laizhi_name)
-
-            if not folder_path.exists():
-                logger.warning(f"来只 '{laizhi_name}' 的图片文件夹不存在")
-                return False
-
-            image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
-
-            # 检查是否是本地路径
+            # 1. 如果是本地路径，直接读取文件计算哈希
             if image_url.startswith(('file://', '/', '\\')) or 'plugin_data' in image_url or 'images' in image_url:
-                # 是本地路径
                 # 清理路径前缀
                 clean_path = image_url.replace('file://', '').replace('\\', '/')
+                image_path = Path(clean_path)
 
-                # 提取文件名
-                filename = Path(clean_path).name
-
-                # 尝试删除该文件
-                image_path = folder_path / filename
                 if image_path.exists():
-                    image_path.unlink()
-                    logger.info(f"根据本地路径删除图片成功: {image_path}")
-                    return True
+                    # 读取文件内容计算哈希
+                    async with aiofiles.open(image_path, 'rb') as f:
+                        content = await f.read()
+                    image_hash = self._calculate_hash(content)
+
+                    # 找到对应的哈希文件名（前8位）
+                    hash_filename = f"{image_hash[:8]}{image_path.suffix}"
+                    folder_path = self._get_laizhi_folder(laizhi_name)
+                    hash_path = folder_path / hash_filename
+
+                    if hash_path.exists():
+                        hash_path.unlink()
+                        logger.info(f"根据哈希删除图片成功: {hash_path}")
+                        return image_hash
+                    else:
+                        logger.warning(f"哈希文件不存在: {hash_path}")
+                        return None
                 else:
-                    logger.warning(f"文件不存在: {image_path}")
-                    return False
-            else:
-                # 是网络URL，尝试匹配文件名
-                parsed_url = urlparse(image_url)
-                url_filename = Path(parsed_url.path).name
+                    logger.warning(f"本地文件不存在: {image_path}")
+                    return None
 
-                # 如果URL有有效的文件名，尝试匹配
-                if url_filename and '.' in url_filename:
-                    test_path = folder_path / url_filename
-                    if test_path.exists():
-                        test_path.unlink()
-                        logger.info(f"根据URL删除图片成功: {test_path}")
-                        return True
+            # 2. 如果是网络URL，下载并计算哈希
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        content = await response.read()
+                        image_hash = self._calculate_hash(content)
 
-                # 如果无法匹配，删除最近的一张图片
-                image_files = [
-                    f for f in folder_path.iterdir()
-                    if f.is_file() and f.suffix.lower() in image_extensions
-                ]
+                        # 找到对应的哈希文件名
+                        folder_path = self._get_laizhi_folder(laizhi_name)
 
-                if image_files:
-                    # 按修改时间排序，删除最新的
-                    image_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-                    latest_image = image_files[0]
-                    latest_image.unlink()
-                    logger.info(f"删除最近的图片: {latest_image}")
-                    return True
-                else:
-                    logger.warning(f"没有找到可删除的图片")
-                    return False
+                        # 尝试找到匹配的文件
+                        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+                        for ext in image_extensions:
+                            hash_path = folder_path / f"{image_hash[:8]}{ext}"
+                            if hash_path.exists():
+                                hash_path.unlink()
+                                logger.info(f"根据网络URL哈希删除图片成功: {hash_path}")
+                                return image_hash
+
+                        logger.warning(f"未找到哈希匹配的文件: {image_hash[:8]}")
+                        return None
+                    else:
+                        logger.error(f"无法下载图片计算哈希，HTTP状态码: {response.status}")
+                        return None
 
         except Exception as e:
-            logger.error(f"根据URL删除图片异常: {e}")
-            return False
+            logger.error(f"根据哈希删除图片异常: {e}")
+            return None
 
     async def delete_all_images(self, laizhi_name: str) -> int:
         """

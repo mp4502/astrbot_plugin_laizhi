@@ -21,6 +21,7 @@ class LaizhiInfo:
         last_used: str = None,
         description: str = "",
         aliases: list = None,
+        image_hashes: list = None,
     ):
         self.name = name
         self.created_at = created_at or datetime.now().isoformat()
@@ -28,6 +29,7 @@ class LaizhiInfo:
         self.last_used = last_used or datetime.now().isoformat()
         self.description = description
         self.aliases = aliases or []
+        self.image_hashes = image_hashes or []
 
     def to_dict(self) -> dict:
         """转换为字典"""
@@ -38,6 +40,7 @@ class LaizhiInfo:
             "last_used": self.last_used,
             "description": self.description,
             "aliases": self.aliases,
+            "image_hashes": self.image_hashes,
         }
 
     @classmethod
@@ -50,6 +53,7 @@ class LaizhiInfo:
             last_used=data.get("last_used"),
             description=data.get("description", ""),
             aliases=data.get("aliases", []),
+            image_hashes=data.get("image_hashes", []),
         )
 
 
@@ -123,6 +127,16 @@ class LaizhiDB:
         if description is not None:
             data[name]["description"] = description
 
+        await self._save_data(data)
+        return True
+
+    async def _update_hashes(self, name: str, hashes: list) -> bool:
+        """更新图片哈希列表"""
+        data = await self._load_data()
+        if name not in data:
+            return False
+
+        data[name]["image_hashes"] = hashes
         await self._save_data(data)
         return True
 
