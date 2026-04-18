@@ -264,6 +264,12 @@ class PhotoDatabase:
         :return: 删除成功返回图片哈希值，失败返回None
         """
         try:
+            folder_path = self._get_laizhi_folder(laizhi_name, session_id)
+
+            if not folder_path.exists():
+                logger.warning(f"来只 '{laizhi_name}' 的图片文件夹不存在")
+                return None
+
             # 1. 如果是本地路径，直接读取文件计算哈希
             if image_url.startswith(('file://', '/', '\\')) or 'plugin_data' in image_url or 'images' in image_url:
                 # 清理路径前缀
@@ -276,33 +282,29 @@ class PhotoDatabase:
                         content = await f.read()
                     image_hash = self._calculate_hash(content)
 
-                    # 找到对应的哈希文件名（前8位）
-                    hash_filename = f"{image_hash[:8]}{image_path.suffix}"
-                    folder_path = self._get_laizhi_folder(laizhi_name, session_id)
-                    hash_path = folder_path / hash_filename
+                    # 根据哈希值查找并删除文件（尝试所有扩展名）
+                    image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+                    for ext in image_extensions:
+                        hash_path = folder_path / f"{image_hash[:8]}{ext}"
+                        if hash_path.exists():
+                            hash_path.unlink()
+                            logger.info(f"根据本地路径删除图片成功: {hash_path}")
+                            return image_hash
 
-                    if hash_path.exists():
-                        hash_path.unlink()
-                        logger.info(f"根据哈希删除图片成功: {hash_path}")
-                        return image_hash
-                    else:
-                        logger.warning(f"哈希文件不存在: {hash_path}")
-                        return None
+                    logger.warning(f"未找到哈希匹配的文件: {image_hash[:8]}")
+                    return None
                 else:
                     logger.warning(f"本地文件不存在: {image_path}")
                     return None
 
-            # 2. 如果是网络URL，下载并计算哈希
+            # 2. 如果是网络URL，下载并计算哈希后删除
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         content = await response.read()
                         image_hash = self._calculate_hash(content)
 
-                        # 找到对应的哈希文件名
-                        folder_path = self._get_laizhi_folder(laizhi_name, session_id)
-
-                        # 尝试找到匹配的文件
+                        # 根据哈希值查找并删除文件（尝试所有扩展名）
                         image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
                         for ext in image_extensions:
                             hash_path = folder_path / f"{image_hash[:8]}{ext}"

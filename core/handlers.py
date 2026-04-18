@@ -69,6 +69,13 @@ class LaizhiHandlers:
                             real_name,
                             image_path
                         )
+                        # 同时将本地图片路径添加到上下文，这样用户回复时可以获取到
+                        self.image_context_manager.add_image(
+                            event,
+                            image_path,
+                            message_id=str(getattr(event, "message_id", "")),
+                            sender_id=str(getattr(event, "user_id", "")),
+                        )
                         logger.info(f"记录发送图片: 哈希={image_hash[:8]}, 图库={real_name}, 路径={image_path}")
                     except Exception as e:
                         logger.warning(f"记录图片映射失败: {e}")

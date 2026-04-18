@@ -133,14 +133,14 @@ class MyPlugin(Star):
         if result:
             yield result
 
-    @filter.command(r"^列表$")
+    @filter.regex(r"^列表$")
     async def handle_list(self, event: AstrMessageEvent):
         """处理列表命令"""
         result = await self.handlers.handle_list(event)
         if result:
             yield result
 
-    @filter.command(r"^谁添加的$")
+    @filter.regex(r"^谁添加的$")
     async def handle_who_added(self, event: AstrMessageEvent):
         """处理'谁添加的'命令 - 查询图片添加者信息"""
         result = await self.handlers.handle_who_added(event)
