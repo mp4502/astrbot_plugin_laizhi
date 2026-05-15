@@ -147,7 +147,8 @@ class ImageContextManager:
         self._global_session = SessionImages(max_images=self.max_images_per_session)
 
         # 记录机器人发送的图片：图片哈希 -> (session_id, laizhi_name, image_path)
-        self._sent_images: dict[str, tuple[str, str, str]] = {}
+        self._sent_images: OrderedDict[str, tuple[str, str, str]] = OrderedDict()
+        self.max_sent_images: int = 500  # 最大记录的发送图片数
 
         # 使用同步锁保护共享结构，避免并发读写导致状态抖动。
         self._lock = threading.RLock()
@@ -394,7 +395,13 @@ class ImageContextManager:
         """
         with self._lock:
             session_id = self._get_session_key(event)
+            # 如果哈希已存在，先移除以刷新到末尾（LRU 顺序）
+            if image_hash in self._sent_images:
+                del self._sent_images[image_hash]
             self._sent_images[image_hash] = (session_id, laizhi_name, image_path)
+            # 超出上限时淘汰最旧的记录
+            while len(self._sent_images) > self.max_sent_images:
+                self._sent_images.popitem(last=False)
             logger.debug(f"[ImageContext] 记录发送图片: {image_hash[:8]} -> {laizhi_name}")
 
     def get_sent_image_info(self, image_hash: str) -> tuple[str, str, str] | None:

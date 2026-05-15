@@ -2,6 +2,9 @@
 来只插件命令处理器
 包含命令处理的业务逻辑
 """
+import hashlib
+
+import aiofiles
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api import logger
 from .image_context import get_image_context_manager
@@ -55,9 +58,9 @@ class LaizhiHandlers:
                 laizhi_info = await self.db.get_laizhi(real_name, session_id)
 
                 # 计算图片哈希
-                import hashlib
-                with open(image_path, 'rb') as f:
-                    image_hash = hashlib.sha256(f.read()).hexdigest()
+                async with aiofiles.open(image_path, 'rb') as f:
+                    content = await f.read()
+                image_hash = hashlib.sha256(content).hexdigest()
 
                 # 记录发送的图片信息：图片哈希 -> 图库名映射
                 if self.image_context_manager:
@@ -153,17 +156,12 @@ class LaizhiHandlers:
             local_path, image_hash = download_result
 
             # 检查图片是否已存在（通过哈希值）
-            laizhi_info = await self.db.get_laizhi(real_name, session_id)
-            if image_hash in laizhi_info.image_hashes:
-                return event.plain_result(f"该图片已存在！图库 '{real_name}' 当前总数: {laizhi_info.image_count}")
-
             # 获取添加者信息
             from datetime import datetime
             adder_name = event.get_sender_name()
             adder_qq = event.get_sender_id()
 
             # 创建图片信息
-            from .database import ImageInfo
             image_info = ImageInfo(
                 hash=image_hash,
                 adder_name=adder_name,
@@ -172,16 +170,15 @@ class LaizhiHandlers:
                 file_path=local_path
             )
 
-            # 更新数据库中的图片计数、哈希列表和图片信息
-            new_count = laizhi_info.image_count + 1
-            new_hashes = laizhi_info.image_hashes + [image_hash]
-            new_image_infos = laizhi_info.image_infos + [image_info]
-            await self.db.update_laizhi(real_name, session_id, image_count=new_count)
-            await self.db._update_hashes(real_name, new_hashes, session_id)
-            await self.db._update_image_infos(real_name, new_image_infos, session_id)
+            # 原子性地添加图片（计数+哈希+信息一步完成）
+            success = await self.db.add_image(real_name, image_info, session_id)
+            if not success:
+                laizhi_info = await self.db.get_laizhi(real_name, session_id)
+                return event.plain_result(f"该图片已存在！图库 '{real_name}' 当前总数: {laizhi_info.image_count}")
 
-            logger.info(f"成功添加图片到 '{real_name}', 添加者: {adder_name}({adder_qq}), 哈希: {image_hash[:8]}, 当前总数: {new_count}")
-            return event.plain_result(f"添加图片成功！\n当前总数: {new_count}{session_info}")
+            laizhi_info = await self.db.get_laizhi(real_name, session_id)
+            logger.info(f"成功添加图片到 '{real_name}', 添加者: {adder_name}({adder_qq}), 哈希: {image_hash[:8]}, 当前总数: {laizhi_info.image_count}")
+            return event.plain_result(f"添加图片成功！\n当前总数: {laizhi_info.image_count}{session_info}")
         else:
             return event.plain_result(f"图片下载失败: {image_url}")
 
@@ -254,7 +251,6 @@ class LaizhiHandlers:
 
     async def handle_delete(self, event: AstrMessageEvent):
         """处理删除命令的业务逻辑 - 回复机器人发送的图片即可删除"""
-        import hashlib
 
         # 尝试获取图片URL或路径
         image_url = None
@@ -264,7 +260,7 @@ class LaizhiHandlers:
         if self.image_context_manager:
             try:
                 image_url = self.image_context_manager.get_recent_image(event)
-            except:
+            except Exception:
                 pass
 
         # 2. 如果上下文管理器没有，尝试从消息中获取
@@ -287,8 +283,9 @@ class LaizhiHandlers:
         # 如果是本地路径，直接计算哈希（包含机器人发送的本地图片）
         if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/') or target_path.startswith('\\')):
             try:
-                with open(target_path, 'rb') as f:
-                    image_hash = hashlib.sha256(f.read()).hexdigest()
+                async with aiofiles.open(target_path, 'rb') as f:
+                    content = await f.read()
+                image_hash = hashlib.sha256(content).hexdigest()
 
                 # 查询机器人发送的图片记录
                 if self.image_context_manager:
@@ -298,26 +295,17 @@ class LaizhiHandlers:
                         real_name = await self.db.resolve_name(laizhi_name, session_id)
 
                         if real_name:
-                            # 删除图片
+                            # 删除物理文件
                             deleted_hash = await self.photo_db.delete_image_by_url(real_name, target_path, session_id)
                             if deleted_hash:
-                                # 更新计数、哈希列表和图片信息
-                                laizhi_info = await self.db.get_laizhi(real_name, session_id)
-                                new_count = max(0, laizhi_info.image_count - 1)
-                                new_hashes = [h for h in laizhi_info.image_hashes if h != deleted_hash]
-                                new_image_infos = [info for info in laizhi_info.image_infos if info.hash != deleted_hash]
-                                await self.db.update_laizhi(real_name, session_id, image_count=new_count)
-                                await self.db._update_hashes(real_name, new_hashes, session_id)
-                                await self.db._update_image_infos(real_name, new_image_infos, session_id)
-
-                                # 获取删除的图片添加者信息
-                                deleted_info = next((info for info in laizhi_info.image_infos if info.hash == deleted_hash), None)
-                                adder_msg = ""
-                                if deleted_info:
-                                    adder_name = deleted_info.adder_name or "未知"
-                                    adder_msg = f"（添加者: {adder_name}）"
-
-                                return event.plain_result(f"删除图片成功{adder_msg}！图库 '{real_name}' 剩余 {new_count} 张图片")
+                                # 原子性地从数据库移除图片
+                                removed_info = await self.db.remove_image(real_name, deleted_hash, session_id)
+                                if removed_info:
+                                    laizhi_info = await self.db.get_laizhi(real_name, session_id)
+                                    adder_msg = ""
+                                    if removed_info.adder_name:
+                                        adder_msg = f"（添加者: {removed_info.adder_name}）"
+                                    return event.plain_result(f"删除图片成功{adder_msg}！图库 '{real_name}' 剩余 {laizhi_info.image_count} 张图片")
 
                 return event.plain_result(f"删除图片失败！未找到该图片的发送记录，只能删除机器人发送的图片")
             except Exception as e:
@@ -375,7 +363,6 @@ class LaizhiHandlers:
 
     async def handle_who_added(self, event: AstrMessageEvent):
         """处理'谁添加的'命令 - 查询图片添加者信息"""
-        import hashlib
 
         # 尝试获取图片URL或路径
         image_url = None
@@ -385,7 +372,7 @@ class LaizhiHandlers:
         if self.image_context_manager:
             try:
                 image_url = self.image_context_manager.get_recent_image(event)
-            except:
+            except Exception:
                 pass
 
         # 2. 如果上下文管理器没有，尝试从消息中获取
@@ -408,8 +395,9 @@ class LaizhiHandlers:
         # 如果是本地路径，直接计算哈希（包含机器人发送的本地图片）
         if target_path and ('images' in target_path or 'plugin_data' in target_path or target_path.startswith('/') or target_path.startswith('\\')):
             try:
-                with open(target_path, 'rb') as f:
-                    image_hash = hashlib.sha256(f.read()).hexdigest()
+                async with aiofiles.open(target_path, 'rb') as f:
+                    content = await f.read()
+                image_hash = hashlib.sha256(content).hexdigest()
 
                 logger.info(f"计算回复图片的哈希: {image_hash[:8]}, 路径: {target_path}")
 
@@ -434,7 +422,7 @@ class LaizhiHandlers:
                                         from datetime import datetime
                                         dt = datetime.fromisoformat(add_time)
                                         time_str = dt.strftime("%Y-%m-%d %H:%M")
-                                    except:
+                                    except Exception:
                                         time_str = add_time
 
                                     return event.plain_result(

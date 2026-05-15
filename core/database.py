@@ -6,7 +6,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict
-from dataclasses import dataclass, field
+import aiofiles
+from dataclasses import dataclass
 
 from astrbot.api import logger
 
@@ -19,9 +20,6 @@ class ImageInfo:
     adder_qq: str = ""
     add_time: str = ""
     file_path: str = ""
-
-
-@dataclass
 
 
 class LaizhiInfo:
@@ -118,22 +116,22 @@ class LaizhiDB:
         db_path = self._get_db_path(session_id)
         if not db_path.exists():
             db_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(db_path, "w", encoding="utf-8") as f:
-                f.write("{}")
+            async with aiofiles.open(db_path, "w", encoding="utf-8") as f:
+                await f.write("{}")
             logger.info(f"来只数据库已初始化: {db_path}")
             return
 
         # 验证现有文件格式
         try:
-            with open(db_path, encoding="utf-8") as f:
-                data = f.read()
+            async with aiofiles.open(db_path, encoding="utf-8") as f:
+                data = await f.read()
             parsed = json.loads(data)
             if not isinstance(parsed, dict):
                 raise ValueError("数据库格式错误")
         except Exception as e:
             logger.warning(f"来只数据库文件损坏，重新初始化: {e}")
-            with open(db_path, "w", encoding="utf-8") as f:
-                f.write("{}")
+            async with aiofiles.open(db_path, "w", encoding="utf-8") as f:
+                await f.write("{}")
 
     async def add_laizhi(self, name: str, session_id: str = "default", description: str = "") -> bool:
         """添加新的来只"""
@@ -178,28 +176,63 @@ class LaizhiDB:
         await self._save_data(data, session_id)
         return True
 
-    async def _update_hashes(self, name: str, hashes: list, session_id: str = "default") -> bool:
-        """更新图片哈希列表"""
+    async def add_image(self, name: str, image_info: ImageInfo, session_id: str = "default") -> bool:
+        """原子性地添加图片信息（计数+哈希+信息一步完成）"""
         data = await self._load_data(session_id)
         if name not in data:
             return False
 
-        data[name]["image_hashes"] = hashes
-        await self._save_data(data, session_id)
-        return True
-
-    async def _update_image_infos(self, name: str, image_infos: list, session_id: str = "default") -> bool:
-        """更新图片信息列表"""
-        data = await self._load_data(session_id)
-        if name not in data:
+        hashes = data[name].get("image_hashes", [])
+        if image_info.hash in hashes:
             return False
 
-        data[name]["image_infos"] = [self._image_info_to_dict(None, info) for info in image_infos]
+        data[name]["image_count"] = data[name].get("image_count", 0) + 1
+        data[name].setdefault("image_hashes", []).append(image_info.hash)
+        data[name].setdefault("image_infos", []).append(self._to_image_info_dict(image_info))
         await self._save_data(data, session_id)
         return True
 
-    def _image_info_to_dict(self, _, info: ImageInfo) -> dict:
-        """将 ImageInfo 转换为字典（静态方法版本）"""
+    async def remove_image(self, name: str, image_hash: str, session_id: str = "default") -> Optional[ImageInfo]:
+        """原子性地移除图片信息，返回被移除的 ImageInfo"""
+        data = await self._load_data(session_id)
+        if name not in data:
+            return None
+
+        hashes = data[name].get("image_hashes", [])
+        if image_hash not in hashes:
+            return None
+
+        # 找到被删除的图片信息
+        infos = data[name].get("image_infos", [])
+        removed_info = None
+        for info in infos:
+            info_h = info.get("hash", "") if isinstance(info, dict) else info.hash
+            if info_h == image_hash:
+                removed_info = info
+                break
+
+        # 一步完成：移除哈希、信息、减少计数
+        data[name]["image_hashes"] = [h for h in hashes if h != image_hash]
+        data[name]["image_infos"] = [
+            i for i in infos
+            if (i.get("hash", "") if isinstance(i, dict) else i.hash) != image_hash
+        ]
+        data[name]["image_count"] = max(0, data[name].get("image_count", 0) - 1)
+        await self._save_data(data, session_id)
+
+        if isinstance(removed_info, dict):
+            return ImageInfo(
+                hash=removed_info.get("hash", ""),
+                adder_name=removed_info.get("adder_name", ""),
+                adder_qq=removed_info.get("adder_qq", ""),
+                add_time=removed_info.get("add_time", ""),
+                file_path=removed_info.get("file_path", ""),
+            )
+        return removed_info
+
+    @staticmethod
+    def _to_image_info_dict(info: ImageInfo) -> dict:
+        """将 ImageInfo 转换为字典"""
         if isinstance(info, dict):
             return info
         return {
@@ -343,8 +376,8 @@ class LaizhiDB:
             return {}
 
         try:
-            with open(db_path, encoding="utf-8") as f:
-                raw = f.read()
+            async with aiofiles.open(db_path, encoding="utf-8") as f:
+                raw = await f.read()
             return json.loads(raw) if raw else {}
         except json.JSONDecodeError as e:
             logger.error(f"JSON 解析失败: {e}")
@@ -354,5 +387,5 @@ class LaizhiDB:
         """保存数据"""
         db_path = self._get_db_path(session_id)
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(db_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, indent=4, ensure_ascii=False))
+        async with aiofiles.open(db_path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(data, indent=4, ensure_ascii=False))

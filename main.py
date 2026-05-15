@@ -18,7 +18,7 @@ from .core import (
 from .core.image_context import init_image_context_manager, get_image_context_manager
 
 
-@register("laizhi", "mp4502", "AstrBot 来只图库插件 - 支持图片管理", "2.0.0")
+@register("laizhi", "mp4502", "AstrBot 来只图库插件 - 支持图片管理", "2.1.0")
 class MyPlugin(Star):
     """来只图库插件主类"""
 

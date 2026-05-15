@@ -53,7 +53,7 @@ class PhotoDatabase:
         import os
 
         try:
-            # 1. 先下载到临时文件
+            # 1. 下载图片内容
             async with aiohttp.ClientSession() as session:
                 async with session.get(image_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status != 200:
@@ -65,55 +65,32 @@ class PhotoDatabase:
                     # 2. 计算哈希值
                     image_hash = self._calculate_hash(content)
 
-                    # 3. 保存到临时文件
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
-                        tmp_file.write(content)
-                        tmp_file.flush()
-                        temp_path = tmp_file.name
-
-                    logger.info(f"图片下载到临时文件: {temp_path}, 哈希: {image_hash[:8]}")
-
-                    # 4. 检查是否已存在（通过哈希文件名）
+                    # 3. 检查是否已存在（通过哈希文件名）
                     folder_path = self._get_laizhi_folder(laizhi_name, session_id)
                     folder_path.mkdir(parents=True, exist_ok=True)
 
-                    # 尝试不同的扩展名
                     image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
-                    hash_file_exists = False
                     hash_path = None
 
                     for ext in image_extensions:
                         potential_path = folder_path / f"{image_hash[:8]}{ext}"
                         if potential_path.exists():
                             hash_path = potential_path
-                            hash_file_exists = True
                             break
 
-                    # 5. 删除临时文件
-                    try:
-                        os.unlink(temp_path)
-                        logger.info(f"已删除临时文件: {temp_path}")
-                    except Exception as e:
-                        logger.warning(f"删除临时文件失败: {e}")
-
-                    # 6. 如果已存在，返回现有路径
-                    if hash_file_exists:
+                    # 4. 如果已存在，返回现有路径
+                    if hash_path:
                         logger.info(f"图片已存在（哈希重复）: {hash_path}")
                         return str(hash_path), image_hash
 
-                    # 7. 如果不存在，从哈希和原始文件名确定扩展名
-                    # 尝试从URL获取扩展名
-                    from urllib.parse import urlparse
+                    # 5. 确定扩展名并保存到最终位置
                     parsed_url = urlparse(image_url)
                     url_filename = os.path.basename(parsed_url.path)
                     ext = os.path.splitext(url_filename)[1].lower()
 
-                    # 如果URL没有扩展名或扩展名不支持，使用默认
                     if ext not in image_extensions:
-                        # 根据内容类型判断（简单实现：默认jpg）
                         ext = '.jpg'
 
-                    # 8. 重新下载并保存到最终位置
                     final_path = folder_path / f"{image_hash[:8]}{ext}"
                     async with aiofiles.open(final_path, 'wb') as f:
                         await f.write(content)
@@ -379,7 +356,7 @@ class PhotoDatabase:
         :param laizhi_name: 来只名称
         :return: 图片数量
         """
-        images = await self.get_all_images(laizhi_name)
+        images = await self.get_all_images(laizhi_name, session_id)
         return len(images)
 
     async def delete_laizhi_folder(self, laizhi_name: str, session_id: str = "default") -> bool:
